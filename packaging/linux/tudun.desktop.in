@@ -1,0 +1,11 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Tudun
+Comment=View and manage systemd services
+Exec=@APP_PATH@/scripts/run.sh
+Icon=tudun
+Terminal=false
+Categories=System;
+StartupNotify=true
+StartupWMClass=tudun
