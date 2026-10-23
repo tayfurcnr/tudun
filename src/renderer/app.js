@@ -15,6 +15,7 @@ const ui = {
   emptyDetail: document.getElementById('empty-detail'),
   dialog: document.getElementById('confirm-dialog'),
   unitDialog: document.getElementById('unit-dialog'),
+  analysisDialog: document.getElementById('analysis-dialog'),
   logs: document.getElementById('log-output'),
   logsStatus: document.getElementById('logs-status'),
   lineCount: document.getElementById('log-line-count')
@@ -37,7 +38,8 @@ const state = {
   logLines: [],
   logPaused: false,
   logLive: false,
-  unitDraft: null
+  unitDraft: null,
+  analysis: null
 };
 
 const views = {
@@ -148,6 +150,7 @@ function renderList() {
       <span class="service-description" title="${escapeHtml(service.description)}">${escapeHtml(service.description || 'No description')}</span>
       <span class="status-badge ${statusClass(service)}">${escapeHtml(statusLabel(service))}</span>
       <span class="startup-badge ${startupClass(service)}">${escapeHtml(startupLabel(service))}</span>
+      <button class="analyze-button" type="button" data-analyze="${escapeHtml(service.name)}" aria-label="Analyze ${escapeHtml(service.name)}"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M2 15h16M4 12l4-4 3 2 5-6"/></svg>Analyze</button>
     </div>`).join('');
   ui.list.scrollTop = previousScrollTop;
   renderDetails();
@@ -166,6 +169,109 @@ function formatMemory(value) {
   if (!Number.isFinite(bytes) || bytes <= 0) return '—';
   if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
   return `${Math.round(bytes / 1024 ** 2)} MB`;
+}
+
+function formatBytes(value) {
+  if (!Number.isFinite(value) || value < 0) return '—';
+  if (value >= 1024 ** 3) return `${(value / 1024 ** 3).toFixed(2)} GB`;
+  if (value >= 1024 ** 2) return `${(value / 1024 ** 2).toFixed(1)} MB`;
+  return `${Math.round(value / 1024)} KB`;
+}
+
+function drawAnalysisChart(id, values, maximum) {
+  const svg = document.getElementById(id);
+  const area = svg.querySelector('.analysis-chart-area');
+  const line = svg.querySelector('.analysis-chart-line');
+  if (!values.length) {
+    area.setAttribute('d', '');
+    line.setAttribute('d', '');
+    return;
+  }
+  const points = values.map((value, index) => {
+    const x = 500 - (values.length - 1 - index) * (500 / 59);
+    const y = 124 - Math.min(value / maximum, 1) * 112;
+    return [x, y];
+  });
+  const linePath = points.map(([x, y], index) => `${index ? 'L' : 'M'} ${x.toFixed(1)} ${y.toFixed(1)}`).join(' ');
+  line.setAttribute('d', linePath);
+  area.setAttribute('d', `${linePath} L 500 124 L ${points[0][0].toFixed(1)} 124 Z`);
+}
+
+function renderAnalysis(sample, cpuPercent) {
+  const analysis = state.analysis;
+  if (!analysis || analysis.unit !== sample.unit) return;
+  document.getElementById('analysis-state').textContent = statusLabel(sample);
+  document.getElementById('analysis-updated').textContent = `Updated ${new Date().toLocaleTimeString('en-US')}`;
+  document.getElementById('analysis-cpu').textContent = cpuPercent === null ? '—' : `${cpuPercent < 10 ? cpuPercent.toFixed(1) : Math.round(cpuPercent)}%`;
+  document.getElementById('analysis-memory').textContent = formatBytes(sample.memoryBytes);
+  document.getElementById('analysis-tasks').textContent = sample.tasks === null ? '—' : String(sample.tasks);
+  document.getElementById('analysis-peak').textContent = formatBytes(sample.peakBytes);
+  document.getElementById('analysis-source').textContent = sample.cpuUsageNs === null
+    ? 'CPU accounting is unavailable for this service.'
+    : `Service-wide metrics · ${sample.source}`;
+  document.getElementById('analysis-pid').textContent = `Main PID ${sample.pid || '—'}`;
+  if (cpuPercent !== null) analysis.cpuHistory.push(cpuPercent);
+  if (sample.memoryBytes !== null) analysis.memoryHistory.push(sample.memoryBytes);
+  analysis.cpuHistory = analysis.cpuHistory.slice(-60);
+  analysis.memoryHistory = analysis.memoryHistory.slice(-60);
+  const cpuMax = Math.max(100, Math.ceil(Math.max(0, ...analysis.cpuHistory) / 25) * 25);
+  const memoryMax = Math.max(1, ...analysis.memoryHistory) * 1.15;
+  document.getElementById('analysis-cpu-scale').textContent = analysis.cpuHistory.length ? `0–${cpuMax}%` : 'Collecting samples';
+  document.getElementById('analysis-memory-scale').textContent = analysis.memoryHistory.length ? `0–${formatBytes(memoryMax)}` : 'No data';
+  drawAnalysisChart('analysis-cpu-chart', analysis.cpuHistory, cpuMax);
+  drawAnalysisChart('analysis-memory-chart', analysis.memoryHistory, memoryMax);
+}
+
+async function sampleAnalysis(analysis) {
+  if (state.analysis !== analysis || analysis.busy) return;
+  analysis.busy = true;
+  try {
+    const sample = await api.serviceMetrics(analysis.unit);
+    if (state.analysis !== analysis) return;
+    let cpuPercent = null;
+    if (analysis.previous && (analysis.previous.active !== sample.active || analysis.previous.pid !== sample.pid)) {
+      analysis.cpuHistory = [];
+      analysis.memoryHistory = [];
+      analysis.previous = null;
+    }
+    if (sample.cpuUsageNs !== null && analysis.previous && analysis.previous.cpuUsageNs !== null && analysis.previous.source === sample.source) {
+      const usageDelta = BigInt(sample.cpuUsageNs) - BigInt(analysis.previous.cpuUsageNs);
+      const timeDelta = BigInt(sample.sampledAtNs) - BigInt(analysis.previous.sampledAtNs);
+      if (usageDelta >= 0n && timeDelta > 0n) cpuPercent = Number(usageDelta) / Number(timeDelta) * 100;
+      if (usageDelta < 0n) {
+        analysis.cpuHistory = [];
+        analysis.memoryHistory = [];
+      }
+    }
+    analysis.previous = sample;
+    renderAnalysis(sample, cpuPercent);
+  } catch (error) {
+    if (state.analysis === analysis) document.getElementById('analysis-source').textContent = `Metrics unavailable: ${error.message}`;
+  } finally {
+    analysis.busy = false;
+  }
+}
+
+function openAnalysis(unit) {
+  const service = state.services.find((item) => item.name === unit);
+  if (!service) return;
+  if (ui.analysisDialog.open) ui.analysisDialog.close();
+  const analysis = { unit, previous: null, cpuHistory: [], memoryHistory: [], busy: false, timer: null };
+  state.analysis = analysis;
+  document.getElementById('analysis-title').textContent = unit;
+  document.getElementById('analysis-description').textContent = service.description || 'Live resource usage';
+  for (const id of ['analysis-cpu', 'analysis-memory', 'analysis-tasks', 'analysis-peak']) document.getElementById(id).textContent = '—';
+  document.getElementById('analysis-state').textContent = 'Connecting…';
+  document.getElementById('analysis-updated').textContent = 'Waiting for first sample';
+  document.getElementById('analysis-source').textContent = 'Reading service metrics…';
+  document.getElementById('analysis-pid').textContent = 'Main PID —';
+  document.getElementById('analysis-cpu-scale').textContent = 'Collecting samples';
+  document.getElementById('analysis-memory-scale').textContent = 'No data';
+  drawAnalysisChart('analysis-cpu-chart', [], 100);
+  drawAnalysisChart('analysis-memory-chart', [], 1);
+  ui.analysisDialog.showModal();
+  sampleAnalysis(analysis);
+  analysis.timer = setInterval(() => sampleAnalysis(analysis), 1000);
 }
 
 function renderDetails() {
@@ -548,6 +654,12 @@ document.querySelector('.table-head').addEventListener('click', (event) => {
 });
 
 ui.list.addEventListener('click', (event) => {
+  const analyze = event.target.closest('[data-analyze]');
+  if (analyze) {
+    updateSelected(analyze.dataset.analyze);
+    openAnalysis(analyze.dataset.analyze);
+    return;
+  }
   const clear = event.target.closest('[data-clear-filter]');
   if (clear) {
     if (clear.dataset.clearFilter === 'search') {
@@ -569,6 +681,7 @@ ui.list.addEventListener('click', (event) => {
 });
 
 ui.list.addEventListener('dblclick', (event) => {
+  if (event.target.closest('[data-analyze]')) return;
   const row = event.target.closest('[data-unit]');
   if (row) {
     updateSelected(row.dataset.unit);
@@ -605,6 +718,11 @@ document.getElementById('unit-content').addEventListener('input', (event) => {
 });
 document.getElementById('unit-cancel').addEventListener('click', () => ui.unitDialog.close());
 document.getElementById('unit-cancel-top').addEventListener('click', () => ui.unitDialog.close());
+document.getElementById('analysis-close').addEventListener('click', () => ui.analysisDialog.close());
+ui.analysisDialog.addEventListener('close', () => {
+  if (state.analysis) clearInterval(state.analysis.timer);
+  state.analysis = null;
+});
 document.getElementById('theme-button').addEventListener('click', () => {
   state.theme = state.theme === 'dark' ? 'light' : 'dark';
   document.body.dataset.theme = state.theme;

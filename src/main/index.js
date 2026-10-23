@@ -20,6 +20,7 @@ function registerIpc() {
     return { maximized: window.isMaximized() };
   });
   ipcMain.handle('services:list', () => systemd.listServices());
+  ipcMain.handle('service:metrics', (_event, unit) => systemd.serviceMetrics(unit));
   ipcMain.handle('settings:load', async () => {
     try {
       const saved = JSON.parse(await fs.readFile(settingsFile(), 'utf8'));

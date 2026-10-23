@@ -15,10 +15,13 @@ TUDUN is a desktop application for viewing and managing systemd services on Ubun
 - Delete local service units after confirmation (stops and disables the service first)
 - Enable or disable startup at boot
 - Inspect service status, PID, memory use, unit file, and recent result
+- Open per-service analysis with live CPU, memory, task counts, and short usage charts
 - Read live or historical journal logs, filter them, and export them
 - Switch between dark and light themes; collapse the navigation and details panels
 
 Service actions, unit writes, and journal access use Polkit authorization through `pkexec`. The application itself runs as the current user. Saving a unit reloads systemd; it does not start, enable, or restart the service.
+
+The **Analyze** button reads service-wide resource counters from cgroup v2 when available and falls back to systemd accounting properties on older hosts. CPU percentage is based on consecutive samples, where one fully used CPU core is 100%. Unavailable counters are shown as unavailable rather than estimated from an unrelated process.
 
 ## Install
 
@@ -38,13 +41,13 @@ npm ci
 npm run package:deb
 ```
 
-This creates `dist/tudun_1.1.0_amd64.deb` on an x64 Ubuntu build machine. To create the Jetson package on an x64 or arm64 Linux build machine:
+This creates `dist/tudun_1.2.0_amd64.deb` on an x64 Ubuntu build machine. To create the Jetson package on an x64 or arm64 Linux build machine:
 
 ```bash
 npm run package:deb:arm64
 ```
 
-The output is `dist/tudun_1.1.0_arm64.deb`. It targets JetPack 5 (Ubuntu 20.04) and JetPack 6 (Ubuntu 22.04) desktop installations. The arm64 package has not yet been run on a physical Jetson; see [INSTALL.md](INSTALL.md) for installation and device requirements.
+The output is `dist/tudun_1.2.0_arm64.deb`. It targets JetPack 5 (Ubuntu 20.04) and JetPack 6 (Ubuntu 22.04) desktop installations. The arm64 package has not yet been run on a physical Jetson; see [INSTALL.md](INSTALL.md) for installation and device requirements.
 
 ## Project layout
 

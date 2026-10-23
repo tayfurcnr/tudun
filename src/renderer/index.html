@@ -44,7 +44,7 @@
           <div><h1 id="view-heading">All Services</h1><p id="view-description">View and manage system services</p></div>
           <div class="list-heading-actions"><div class="result-count" id="result-count">Loading…</div><button class="button button-primary" id="add-service" type="button">+ Add service</button><button class="button button-quiet details-toggle" id="toggle-details" type="button" aria-expanded="true">Hide details</button></div>
         </div>
-        <div class="table-head service-grid"><span>★</span><button data-sort="name">Service Name <b class="sort-arrow">⌃</b></button><button data-sort="description">Description</button><button data-sort="active">Status</button><button data-sort="startup">Startup</button></div>
+        <div class="table-head service-grid"><span>★</span><button data-sort="name">Service Name <b class="sort-arrow">⌃</b></button><button data-sort="description">Description</button><button data-sort="active">Status</button><button data-sort="startup">Startup</button><span class="analysis-column-heading">Analysis</span></div>
         <div class="service-list" id="service-list" role="listbox" aria-label="System services" aria-busy="true"></div>
         <div class="list-footer"><span id="refresh-status">Loading service list…</span><span>Auto refresh · 5 s</span></div>
       </div>
@@ -111,6 +111,26 @@
       <div class="unit-error" id="unit-error" role="alert" hidden></div>
       <div class="unit-dialog-actions"><button class="button button-quiet" type="button" id="unit-cancel">Cancel</button><button class="button button-primary" type="submit" id="unit-save">Save service</button></div>
     </form>
+  </dialog>
+  <dialog id="analysis-dialog" class="analysis-dialog" aria-labelledby="analysis-title">
+    <div class="analysis-shell">
+      <div class="analysis-header">
+        <div><span class="analysis-eyebrow">SERVICE ANALYSIS</span><h2 id="analysis-title">Service</h2><p id="analysis-description">Live resource usage</p></div>
+        <button type="button" class="analysis-close" id="analysis-close" aria-label="Close analysis">×</button>
+      </div>
+      <div class="analysis-context"><span class="analysis-live"><i></i> Live · 1 s</span><span id="analysis-state">Loading…</span><span id="analysis-updated">Waiting for first sample</span></div>
+      <div class="analysis-cards">
+        <div class="analysis-card"><span class="analysis-card-label">CPU</span><strong id="analysis-cpu">—</strong><small>One core = 100%</small></div>
+        <div class="analysis-card"><span class="analysis-card-label">Memory</span><strong id="analysis-memory">—</strong><small>Current service usage</small></div>
+        <div class="analysis-card"><span class="analysis-card-label">Tasks</span><strong id="analysis-tasks">—</strong><small>Processes and threads</small></div>
+        <div class="analysis-card"><span class="analysis-card-label">Peak memory</span><strong id="analysis-peak">—</strong><small>Since service started</small></div>
+      </div>
+      <div class="analysis-charts">
+        <div class="analysis-chart-card"><div class="analysis-chart-title"><strong>CPU usage</strong><span id="analysis-cpu-scale">0–100%</span></div><svg id="analysis-cpu-chart" viewBox="0 0 500 130" preserveAspectRatio="none" aria-label="CPU usage over time"><path class="analysis-chart-area"></path><path class="analysis-chart-line"></path></svg><span class="analysis-chart-caption">Last 60 seconds</span></div>
+        <div class="analysis-chart-card"><div class="analysis-chart-title"><strong>Memory</strong><span id="analysis-memory-scale">—</span></div><svg id="analysis-memory-chart" viewBox="0 0 500 130" preserveAspectRatio="none" aria-label="Memory usage over time"><path class="analysis-chart-area"></path><path class="analysis-chart-line"></path></svg><span class="analysis-chart-caption">Last 60 seconds</span></div>
+      </div>
+      <div class="analysis-footer"><span id="analysis-source">Reading service metrics…</span><span id="analysis-pid">Main PID —</span></div>
+    </div>
   </dialog>
   <div class="toast" id="toast" role="status"></div>
   <script src="app.js"></script>

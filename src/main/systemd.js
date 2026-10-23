@@ -9,6 +9,10 @@ const PROPERTY_NAMES = [
   'Id', 'Description', 'LoadState', 'ActiveState', 'SubState', 'UnitFileState',
   'MainPID', 'ActiveEnterTimestamp', 'MemoryCurrent', 'FragmentPath', 'Result', 'ExecMainStatus'
 ];
+const METRIC_PROPERTIES = [
+  'Id', 'ActiveState', 'MainPID', 'ControlGroup', 'CPUUsageNSec',
+  'MemoryCurrent', 'MemoryPeak', 'TasksCurrent', 'ActiveEnterTimestamp'
+];
 const ALLOWED_ACTIONS = new Set(['start', 'stop', 'restart', 'enable', 'disable']);
 const SERVICE_NAME = /^[A-Za-z0-9_.:@-]+\.service$/;
 const UNIT_DIR = '/etc/systemd/system';
@@ -81,6 +85,56 @@ async function listServices() {
   }
   knownUnits = new Set(services.map((service) => service.name));
   return services;
+}
+
+function metricNumber(value) {
+  const number = Number(value);
+  return value && Number.isFinite(number) && number >= 0 ? number : null;
+}
+
+async function readCgroupValue(directory, name) {
+  try { return (await fs.readFile(path.join(directory, name), 'utf8')).trim(); }
+  catch { return null; }
+}
+
+async function serviceMetrics(unit) {
+  assertKnownUnit(unit);
+  const { stdout } = await run('systemctl', [
+    'show', '--no-pager', `--property=${METRIC_PROPERTIES.join(',')}`, unit
+  ]);
+  const item = parseProperties(stdout)[unit] || {};
+  let cpuUsageNs = /^\d+$/.test(item.CPUUsageNSec || '') ? item.CPUUsageNSec : null;
+  let memoryBytes = metricNumber(item.MemoryCurrent);
+  let peakBytes = metricNumber(item.MemoryPeak);
+  let tasks = metricNumber(item.TasksCurrent);
+  let source = 'systemd';
+  const group = item.ControlGroup || '';
+  if (group.startsWith('/') && group !== '/' && !group.split('/').includes('..')) {
+    const directory = path.resolve('/sys/fs/cgroup', `.${group}`);
+    if (directory.startsWith('/sys/fs/cgroup/')) {
+      const [cpuStat, memory, peak, pids] = await Promise.all([
+        readCgroupValue(directory, 'cpu.stat'),
+        readCgroupValue(directory, 'memory.current'),
+        readCgroupValue(directory, 'memory.peak'),
+        readCgroupValue(directory, 'pids.current')
+      ]);
+      if (cpuStat) {
+        const usage = cpuStat.match(/^usage_usec\s+(\d+)$/m);
+        if (usage) {
+          cpuUsageNs = (BigInt(usage[1]) * 1000n).toString();
+          source = 'cgroup v2';
+        }
+      }
+      if (memory !== null) memoryBytes = metricNumber(memory);
+      if (peak !== null) peakBytes = metricNumber(peak);
+      if (pids !== null) tasks = metricNumber(pids);
+    }
+  }
+  return {
+    unit, active: item.ActiveState || 'unknown', pid: metricNumber(item.MainPID),
+    cpuUsageNs, memoryBytes, peakBytes, tasks, source,
+    since: item.ActiveEnterTimestamp || '', sampledAtNs: process.hrtime.bigint().toString()
+  };
 }
 
 function assertKnownUnit(unit) {
@@ -306,4 +360,4 @@ function startLogs(unit, sender, limit = 500) {
   });
 }
 
-module.exports = { listServices, serviceAction, getUnitDraft, saveUnitDraft, deleteService, readHistory, startLogs, stopLogs };
+module.exports = { listServices, serviceMetrics, serviceAction, getUnitDraft, saveUnitDraft, deleteService, readHistory, startLogs, stopLogs };
