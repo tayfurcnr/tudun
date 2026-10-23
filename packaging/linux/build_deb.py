@@ -78,6 +78,10 @@ Description: TUDUN systemd service manager
         copy(os.path.join(ROOT, "LICENSE"), os.path.join(stage, "usr", "share", "doc", PACKAGE, "copyright"))
         shutil.copytree(os.path.join(ROOT, "src"), os.path.join(app_dir, "src"), ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
         shutil.copytree(electron_dist, os.path.join(app_dir, "electron"), ignore=shutil.ignore_patterns("*.pdb"))
+        sandbox_helper = os.path.join(app_dir, "electron", "chrome-sandbox")
+        if not os.path.isfile(sandbox_helper):
+            raise SystemExit("Electron sandbox helper is missing.")
+        os.chmod(sandbox_helper, 0o4755)
         shutil.copytree(os.path.join(ROOT, "assets"), os.path.join(app_dir, "assets"))
         copy(os.path.join(ROOT, "assets", "icons", "tudun.svg"), os.path.join(stage, "usr", "share", "icons", "hicolor", "scalable", "apps", "tudun.svg"))
         desktop_template = os.path.join(ROOT, "packaging", "linux", "tudun.desktop.in")

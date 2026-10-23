@@ -13,7 +13,7 @@ The application package bundles Electron. You do not need Node.js to run the ins
 From the project directory:
 
 ```bash
-sudo apt install ./dist/tudun_1.2.0_amd64.deb
+sudo apt install ./dist/tudun_1.2.1_amd64.deb
 ```
 
 Open **Tudun** from the GNOME application menu, or run `tudun` in a terminal. A Polkit password dialog may appear when you change a service, save a unit file, or open its journal. Merely viewing the service list does not require elevation.
@@ -54,7 +54,7 @@ npm ci
 npm run package:deb
 ```
 
-The resulting file is `dist/tudun_1.2.0_amd64.deb` on x64 Ubuntu.
+The resulting file is `dist/tudun_1.2.1_amd64.deb` on x64 Ubuntu.
 
 ## Build and install on Jetson
 
@@ -64,13 +64,13 @@ JetPack 5 uses an Ubuntu 20.04 based root file system, and JetPack 6 uses Ubuntu
 npm run package:deb:arm64
 ```
 
-This downloads the Linux arm64 Electron runtime into an isolated temporary build directory and creates `dist/tudun_1.2.0_arm64.deb`. Copy that file to the Jetson, then install it there:
+This downloads the Linux arm64 Electron runtime into an isolated temporary build directory and creates `dist/tudun_1.2.1_arm64.deb`. Copy that file to the Jetson, then install it there:
 
 ```bash
-sudo apt install ./tudun_1.2.0_arm64.deb
+sudo apt install ./tudun_1.2.1_arm64.deb
 ```
 
-Open **Tudun** from the application menu. A desktop session and a working Polkit agent are required for the interface and privileged service operations. A headless SSH session alone cannot show the desktop window. The arm64 package has not yet been exercised on physical JetPack 5 or 6 devices; check those releases before relying on it in production.
+Open **Tudun** from the application menu. A desktop session and a working Polkit agent are required for the interface and privileged service operations. A headless SSH session alone cannot show the desktop window. JetPack 5 packaging has been exercised on a physical device, but the updated sandbox helper and JetPack 6 have not yet been verified there.
 
 ## Troubleshooting
 

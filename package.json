@@ -1,6 +1,6 @@
 {
   "name": "tudun",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "A desktop manager for systemd services on Ubuntu",
   "main": "src/main/index.js",
   "scripts": {
