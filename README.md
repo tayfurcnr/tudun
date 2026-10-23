@@ -38,7 +38,13 @@ npm ci
 npm run package:deb
 ```
 
-This creates `dist/tudun_1.0.0_amd64.deb`. The package targets 64-bit Ubuntu 20.04 and 22.04. It has been exercised on the current development environment; verify the package on each target Ubuntu release before deployment.
+This creates `dist/tudun_1.1.0_amd64.deb` on an x64 Ubuntu build machine. To create the Jetson package on an x64 or arm64 Linux build machine:
+
+```bash
+npm run package:deb:arm64
+```
+
+The output is `dist/tudun_1.1.0_arm64.deb`. It targets JetPack 5 (Ubuntu 20.04) and JetPack 6 (Ubuntu 22.04) desktop installations. The arm64 package has not yet been run on a physical Jetson; see [INSTALL.md](INSTALL.md) for installation and device requirements.
 
 ## Project layout
 

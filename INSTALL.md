@@ -2,7 +2,7 @@
 
 ## Requirements
 
-- Ubuntu 20.04 or 22.04 on an `amd64` desktop with systemd
+- Ubuntu 20.04 or 22.04 on an `amd64` desktop, or JetPack 5/6 on an `arm64` Jetson with a graphical desktop and systemd
 - A working Polkit authentication agent for privileged service actions and journal access
 - The Debian dependencies listed in the package manifest (installed automatically by `apt`)
 
@@ -13,7 +13,7 @@ The application package bundles Electron. You do not need Node.js to run the ins
 From the project directory:
 
 ```bash
-sudo apt install ./dist/tudun_1.0.0_amd64.deb
+sudo apt install ./dist/tudun_1.1.0_amd64.deb
 ```
 
 Open **Tudun** from the GNOME application menu, or run `tudun` in a terminal. A Polkit password dialog may appear when you change a service, save a unit file, or open its journal. Merely viewing the service list does not require elevation.
@@ -54,7 +54,23 @@ npm ci
 npm run package:deb
 ```
 
-The resulting file is `dist/tudun_1.0.0_amd64.deb`. Build on a compatible Ubuntu machine. Test the package on the Ubuntu release you plan to use.
+The resulting file is `dist/tudun_1.1.0_amd64.deb` on x64 Ubuntu.
+
+## Build and install on Jetson
+
+JetPack 5 uses an Ubuntu 20.04 based root file system, and JetPack 6 uses Ubuntu 22.04. Both need the `arm64` package; the `amd64` package cannot run on a Jetson. On an x64 or arm64 Linux build machine with Node.js 22.12 or newer, Python 3, `npm`, and `dpkg-deb`:
+
+```bash
+npm run package:deb:arm64
+```
+
+This downloads the Linux arm64 Electron runtime into an isolated temporary build directory and creates `dist/tudun_1.1.0_arm64.deb`. Copy that file to the Jetson, then install it there:
+
+```bash
+sudo apt install ./tudun_1.1.0_arm64.deb
+```
+
+Open **Tudun** from the application menu. A desktop session and a working Polkit agent are required for the interface and privileged service operations. A headless SSH session alone cannot show the desktop window. The arm64 package has not yet been exercised on physical JetPack 5 or 6 devices; check those releases before relying on it in production.
 
 ## Troubleshooting
 

@@ -1,11 +1,12 @@
 {
   "name": "tudun",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "A desktop manager for systemd services on Ubuntu",
   "main": "src/main/index.js",
   "scripts": {
     "start": "env -u ELECTRON_RUN_AS_NODE electron .",
     "package:deb": "python3 packaging/linux/build_deb.py",
+    "package:deb:arm64": "python3 scripts/build_arm64.py",
     "install:menu": "sh packaging/linux/install-menu.sh"
   },
   "keywords": [

@@ -2,8 +2,10 @@
 """Build an Ubuntu .deb bundling the Electron runtime and app sources."""
 
 import json
+import argparse
 import os
 import shutil
+import struct
 import subprocess
 import tempfile
 
@@ -14,7 +16,7 @@ APP_DIR_NAME = "tudun"
 with open(os.path.join(ROOT, "package.json"), encoding="utf-8") as package_file:
     VERSION = json.load(package_file)["version"]
 OUTPUT_DIR = os.path.join(ROOT, "dist")
-OUTPUT = os.path.join(OUTPUT_DIR, f"{PACKAGE}_{VERSION}_amd64.deb")
+ELF_MACHINES = {"amd64": 62, "arm64": 183}
 
 
 def write(path, content, mode=0o644):
@@ -29,10 +31,33 @@ def copy(source, destination):
     shutil.copy2(source, destination)
 
 
+def electron_architecture(binary):
+    with open(binary, "rb") as executable:
+        header = executable.read(20)
+    if len(header) < 20 or header[:4] != b"\x7fELF" or header[4] != 2 or header[5] != 1:
+        raise SystemExit("Electron binary is not a 64-bit little-endian ELF executable.")
+    return struct.unpack_from("<H", header, 18)[0]
+
+
 def main():
-    electron_dist = os.path.join(ROOT, "node_modules", "electron", "dist")
+    parser = argparse.ArgumentParser(description="Build an Ubuntu package for amd64 or arm64")
+    parser.add_argument("--arch", choices=ELF_MACHINES, default=subprocess.check_output(["dpkg", "--print-architecture"], text=True).strip())
+    parser.add_argument("--electron-dist", default=os.path.join(ROOT, "node_modules", "electron", "dist"))
+    args = parser.parse_args()
+    if args.arch not in ELF_MACHINES:
+        raise SystemExit(f"Unsupported Debian architecture: {args.arch}")
+    electron_dist = os.path.abspath(args.electron_dist)
+    electron_binary = os.path.join(electron_dist, "electron")
     if not os.path.isfile(os.path.join(electron_dist, "electron")):
-        raise SystemExit("Electron is missing. Run npm install first.")
+        if args.electron_dist == os.path.join(ROOT, "node_modules", "electron", "dist"):
+            installer = os.path.join(ROOT, "node_modules", "electron", "install.js")
+            if os.path.isfile(installer):
+                subprocess.run(["node", installer], check=True)
+        if not os.path.isfile(electron_binary):
+            raise SystemExit("Electron is missing. Run npm ci first.")
+    if electron_architecture(electron_binary) != ELF_MACHINES[args.arch]:
+        raise SystemExit(f"Electron binary architecture does not match {args.arch}. Use the matching runtime or npm run package:deb:arm64.")
+    output = os.path.join(OUTPUT_DIR, f"{PACKAGE}_{VERSION}_{args.arch}.deb")
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="tudun-deb-") as temp:
         stage = os.path.join(temp, "package")
@@ -40,12 +65,12 @@ def main():
 Version: {VERSION}
 Section: admin
 Priority: optional
-Architecture: amd64
-Depends: libc6 (>= 2.28), libstdc++6, libgtk-3-0, libnss3, libxss1, libxtst6, libatspi2.0-0, libasound2, libgbm1, systemd, policykit-1
+Architecture: {args.arch}
+Depends: libc6 (>= 2.28), libstdc++6, libgtk-3-0, libnss3, libxss1, libxtst6, libatspi2.0-0, libasound2, libgbm1, systemd, policykit-1, python3
 Maintainer: TUDUN Contributors
 Description: TUDUN systemd service manager
  Electron desktop application for monitoring and managing system services.
- Supports Ubuntu 20.04 and 22.04.
+ Supports Ubuntu 20.04 and 22.04, including JetPack 5 and 6 on arm64.
 """)
         app_dir = os.path.join(stage, "usr", "lib", APP_DIR_NAME)
         os.makedirs(app_dir, exist_ok=True)
@@ -61,8 +86,8 @@ Description: TUDUN systemd service manager
         write(os.path.join(stage, "usr", "share", "applications", "tudun.desktop"), desktop_entry)
         launcher = f"#!/bin/sh\nset -eu\nunset ELECTRON_RUN_AS_NODE ELECTRON_NO_ATTACH_CONSOLE\nexec /usr/lib/{APP_DIR_NAME}/electron/electron /usr/lib/{APP_DIR_NAME} \"$@\"\n"
         write(os.path.join(stage, "usr", "bin", "tudun"), launcher, 0o755)
-        subprocess.run(["dpkg-deb", "--build", "--root-owner-group", "-Zzstd", stage, OUTPUT], check=True)
-    print(OUTPUT)
+        subprocess.run(["dpkg-deb", "--build", "--root-owner-group", "-Zxz", stage, output], check=True)
+    print(output)
 
 
 if __name__ == "__main__":
