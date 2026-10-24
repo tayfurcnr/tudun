@@ -1,14 +1,21 @@
 const { execFile, spawn } = require('node:child_process');
 const { promisify } = require('node:util');
 const crypto = require('node:crypto');
+const fs = require('node:fs/promises');
+const os = require('node:os');
+const path = require('node:path');
+const { Client } = require('ssh2');
 const { WRITE_UNIT_SCRIPT } = require('./systemd');
 
 const execFileAsync = promisify(execFile);
 const HOST_PATTERN = /^[a-z_][a-z0-9_-]*@[a-z0-9][a-z0-9.-]*$/i;
 const UNIT_PATTERN = /^[A-Za-z0-9_.:@-]+\.service$/;
 const PROPERTIES = 'Id,Description,LoadState,ActiveState,SubState,UnitFileState,MainPID,ActiveEnterTimestamp,MemoryCurrent,FragmentPath,Result,ExecMainStatus';
-const SSH_OPTIONS = ['-T', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', '-o', 'ConnectTimeout=8', '-o', 'ServerAliveInterval=10', '-o', 'ServerAliveCountMax=1'];
+const SSH_KEY = path.join(os.homedir(), '.ssh', 'tudun_ed25519');
+const KNOWN_HOSTS = path.join(os.homedir(), '.ssh', 'known_hosts');
+const SSH_OPTIONS = ['-T', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', '-o', `UserKnownHostsFile=${KNOWN_HOSTS}`, '-o', 'ConnectTimeout=8', '-o', 'ServerAliveInterval=10', '-o', 'ServerAliveCountMax=1', '-i', SSH_KEY];
 const knownUnits = new Map();
+const pendingHosts = new Map();
 let logProcess = null;
 
 function validateHost(host) {
@@ -53,6 +60,116 @@ function parseProperties(output) {
 async function checkHost(host) {
   await run(host, 'systemctl --version', 15000);
   return true;
+}
+
+function fingerprint(key) {
+  return `SHA256:${crypto.createHash('sha256').update(key).digest('base64').replace(/=+$/, '')}`;
+}
+
+async function inspectHost(host) {
+  validateHost(host);
+  for (const [token, pending] of pendingHosts) if (pending.expires < Date.now()) pendingHosts.delete(token);
+  try {
+    await checkHost(host);
+    return { ready: true, host };
+  } catch { /* Password setup or first-time trust may be needed. */ }
+  const address = host.split('@')[1];
+  let scan;
+  try {
+    scan = (await execFileAsync('ssh-keyscan', ['-T', '8', '-t', 'ed25519,ecdsa,rsa', address], {
+      encoding: 'utf8', timeout: 12000, maxBuffer: 65536
+    })).stdout;
+  } catch (error) {
+    throw new Error(`Could not read the SSH host key from ${address}: ${String(error.stderr || error.message).trim()}`);
+  }
+  const keys = scan.split(/\r?\n/).filter((line) => !line.startsWith('#')).map((line) => {
+    const [name, type, encoded] = line.trim().split(/\s+/, 3);
+    if (name !== address || !/^(ssh-ed25519|ecdsa-sha2-nistp256|ssh-rsa)$/.test(type || '') || !/^[A-Za-z0-9+/]+=*$/.test(encoded || '')) return null;
+    const raw = Buffer.from(encoded, 'base64');
+    return raw.length >= 32 && raw.length <= 8192 ? { line: `${address} ${type} ${encoded}`, type, encoded, raw } : null;
+  }).filter(Boolean);
+  if (!keys.length) throw new Error('The computer did not provide a supported SSH host key. Check its address and SSH server.');
+  let saved = '';
+  try {
+    await fs.access(KNOWN_HOSTS);
+    try { saved = (await execFileAsync('ssh-keygen', ['-F', address, '-f', KNOWN_HOSTS], { encoding: 'utf8', timeout: 5000 })).stdout; }
+    catch (error) { if (error.code !== 1) throw new Error(`Could not read trusted SSH hosts: ${error.message}`); }
+  } catch (error) { if (error.code !== 'ENOENT') throw error; }
+  const trusted = saved.split(/\r?\n/).filter((line) => line && !line.startsWith('#')).map((line) => line.trim().split(/\s+/));
+  const selected = trusted.length
+    ? keys.find((key) => trusted.some(([, type, encoded]) => type === key.type && encoded === key.encoded))
+    : keys.find((key) => key.type === 'ssh-ed25519') || keys[0];
+  if (!selected) throw new Error('The SSH host key differs from the key already trusted on this computer. Check the remote computer before reconnecting.');
+  const token = crypto.randomBytes(24).toString('hex');
+  pendingHosts.set(token, { host, key: selected, alreadyTrusted: trusted.length > 0, expires: Date.now() + 180000 });
+  return { ready: false, host, token, fingerprint: fingerprint(selected.raw), keyType: selected.type, alreadyTrusted: trusted.length > 0 };
+}
+
+async function ensureAppKey() {
+  const directory = path.dirname(SSH_KEY);
+  await fs.mkdir(directory, { recursive: true, mode: 0o700 });
+  try {
+    const publicKey = (await fs.readFile(`${SSH_KEY}.pub`, 'utf8')).trim();
+    await fs.access(SSH_KEY);
+    if (/^ssh-ed25519 [A-Za-z0-9+/]+=*(?: .*)?$/.test(publicKey)) return publicKey;
+    throw new Error('Tudun SSH public key is invalid.');
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+  }
+  try { await fs.access(SSH_KEY); throw new Error('Tudun SSH private key exists without its public key. Restore the public key before continuing.'); }
+  catch (error) { if (error.code !== 'ENOENT') throw error; }
+  await execFileAsync('ssh-keygen', ['-q', '-t', 'ed25519', '-N', '', '-f', SSH_KEY, '-C', 'tudun'], { timeout: 15000 });
+  return (await fs.readFile(`${SSH_KEY}.pub`, 'utf8')).trim();
+}
+
+function installPublicKey(host, pinnedKey, password, publicKey) {
+  const [username, address] = host.split('@');
+  const algorithms = pinnedKey.type === 'ssh-rsa' ? ['rsa-sha2-512', 'rsa-sha2-256', 'ssh-rsa'] : [pinnedKey.type];
+  if (!/^ssh-ed25519 [A-Za-z0-9+/]+=* tudun$/.test(publicKey)) throw new Error('Invalid Tudun SSH public key.');
+  const command = `umask 077; key='${publicKey}'; mkdir -p "$HOME/.ssh" && chmod 700 "$HOME/.ssh" && touch "$HOME/.ssh/authorized_keys" && chmod 600 "$HOME/.ssh/authorized_keys" && { grep -qxF "$key" "$HOME/.ssh/authorized_keys" || printf "%s\\n" "$key" >> "$HOME/.ssh/authorized_keys"; }`;
+  return new Promise((resolve, reject) => {
+    const client = new Client();
+    let settled = false;
+    const timer = setTimeout(() => finish(new Error('SSH key setup timed out.')), 30000);
+    const finish = (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      client.end();
+      if (error) reject(error); else resolve();
+    };
+    client.on('keyboard-interactive', (_name, _instructions, _language, prompts, respond) => {
+      respond(prompts.map((prompt) => prompt.echo ? '' : password));
+    });
+    client.on('ready', () => client.exec(command, (error, stream) => {
+      if (error) return finish(error);
+      let stderr = '';
+      stream.stderr.on('data', (chunk) => { stderr += chunk.toString().slice(0, 2048); });
+      stream.on('exit', (code) => finish(code === 0 ? null : new Error(stderr.trim() || 'Could not install the SSH key on the remote computer.')));
+      stream.on('close', (code) => finish(code === 0 ? null : new Error(stderr.trim() || 'Could not install the SSH key on the remote computer.')));
+      stream.end();
+    }));
+    client.on('error', (error) => finish(new Error(error.level === 'client-authentication' ? 'SSH password was rejected or password login is disabled on the remote computer.' : error.message)));
+    client.connect({ host: address, port: 22, username, password, tryKeyboard: true, readyTimeout: 15000,
+      algorithms: { serverHostKey: algorithms },
+      hostVerifier: (key) => Buffer.isBuffer(key) && key.length === pinnedKey.raw.length && crypto.timingSafeEqual(key, pinnedKey.raw)
+    });
+  });
+}
+
+async function setupHost(token, password) {
+  if (typeof token !== 'string' || !/^[a-f0-9]{48}$/.test(token) || typeof password !== 'string' || !password || password.length > 1024) throw new Error('Invalid connection setup request.');
+  const pending = pendingHosts.get(token);
+  if (!pending || pending.expires < Date.now()) throw new Error('Connection check expired. Check the address again.');
+  const publicKey = await ensureAppKey();
+  await installPublicKey(pending.host, pending.key, password, publicKey);
+  if (!pending.alreadyTrusted) {
+    await fs.mkdir(path.dirname(KNOWN_HOSTS), { recursive: true, mode: 0o700 });
+    await fs.appendFile(KNOWN_HOSTS, `\n${pending.key.line}\n`, { mode: 0o600 });
+  }
+  pendingHosts.delete(token);
+  await checkHost(pending.host);
+  return { host: pending.host };
 }
 
 async function listServices(host) {
@@ -184,4 +301,4 @@ function startLogs(host, unit, sender, limit = 500) {
   });
 }
 
-module.exports = { validateHost, checkHost, listServices, getUnitDraft, saveUnitDraft, readHistory, startLogs, stopLogs };
+module.exports = { validateHost, checkHost, inspectHost, setupHost, listServices, getUnitDraft, saveUnitDraft, readHistory, startLogs, stopLogs };

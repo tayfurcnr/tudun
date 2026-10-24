@@ -24,6 +24,8 @@ function registerIpc() {
     return { maximized: window.isMaximized() };
   });
   ipcMain.handle('hosts:check', (_event, host) => remote.checkHost(host));
+  ipcMain.handle('hosts:inspect', (_event, host) => remote.inspectHost(host));
+  ipcMain.handle('hosts:setup', (_event, token, password) => remote.setupHost(token, password));
   ipcMain.handle('services:list', (_event, target = 'local') => target === 'local' ? systemd.listServices() : remote.listServices(target));
   ipcMain.handle('service:metrics', (_event, unit, target = 'local') => {
     localOnly(target);

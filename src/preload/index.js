@@ -2,6 +2,8 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('serviceManager', Object.freeze({
   checkHost: (host) => ipcRenderer.invoke('hosts:check', host),
+  inspectHost: (host) => ipcRenderer.invoke('hosts:inspect', host),
+  setupHost: (token, password) => ipcRenderer.invoke('hosts:setup', token, password),
   listServices: (target) => ipcRenderer.invoke('services:list', target),
   serviceMetrics: (unit, target) => ipcRenderer.invoke('service:metrics', unit, target),
   windowControl: (action) => ipcRenderer.invoke('window:control', action),

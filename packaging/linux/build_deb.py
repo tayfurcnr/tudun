@@ -77,6 +77,15 @@ Description: TUDUN systemd service manager
         copy(os.path.join(ROOT, "package.json"), os.path.join(app_dir, "package.json"))
         copy(os.path.join(ROOT, "LICENSE"), os.path.join(stage, "usr", "share", "doc", PACKAGE, "copyright"))
         shutil.copytree(os.path.join(ROOT, "src"), os.path.join(app_dir, "src"), ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+        with open(os.path.join(ROOT, "package-lock.json"), encoding="utf-8") as lock_file:
+            locked = json.load(lock_file)["packages"]
+        for name, metadata in locked.items():
+            if not name.startswith("node_modules/") or metadata.get("dev") or metadata.get("optional"):
+                continue
+            source = os.path.join(ROOT, name)
+            if not os.path.isdir(source):
+                raise SystemExit(f"Production dependency is missing: {name}. Run npm ci first.")
+            shutil.copytree(source, os.path.join(app_dir, name), ignore=shutil.ignore_patterns("*.node", "*.pdb", "__pycache__"))
         shutil.copytree(electron_dist, os.path.join(app_dir, "electron"), ignore=shutil.ignore_patterns("*.pdb"))
         sandbox_helper = os.path.join(app_dir, "electron", "chrome-sandbox")
         if not os.path.isfile(sandbox_helper):

@@ -695,12 +695,23 @@ document.querySelector('.view-nav').addEventListener('click', (event) => {
 });
 
 ui.hostSelect.addEventListener('change', (event) => selectHost(event.target.value));
-document.getElementById('add-host').addEventListener('click', () => {
-  document.getElementById('host-address').value = '';
+let pendingHostSetup = null;
+function resetHostSetup() {
+  pendingHostSetup = null;
+  document.getElementById('host-setup').hidden = true;
+  document.getElementById('host-address').readOnly = false;
+  document.getElementById('host-password').value = '';
+  document.getElementById('host-trust').checked = false;
   document.getElementById('host-error').hidden = true;
+  document.getElementById('host-save').textContent = 'Connect';
+}
+document.getElementById('add-host').addEventListener('click', () => {
+  resetHostSetup();
+  document.getElementById('host-address').value = '';
   ui.hostDialog.showModal();
   document.getElementById('host-address').focus();
 });
+ui.hostDialog.addEventListener('close', resetHostSetup);
 document.getElementById('host-cancel').addEventListener('click', () => ui.hostDialog.close());
 document.getElementById('host-cancel-top').addEventListener('click', () => ui.hostDialog.close());
 document.getElementById('host-form').addEventListener('submit', async (event) => {
@@ -710,18 +721,34 @@ document.getElementById('host-form').addEventListener('submit', async (event) =>
   const saveButton = document.getElementById('host-save');
   errorNode.hidden = true;
   saveButton.disabled = true;
-  saveButton.textContent = 'Connecting…';
+  saveButton.textContent = pendingHostSetup ? 'Installing key…' : 'Checking…';
   try {
-    await api.checkHost(host);
+    if (!pendingHostSetup) {
+      const result = await api.inspectHost(host);
+      if (!result.ready) {
+        pendingHostSetup = result;
+        document.getElementById('host-address').readOnly = true;
+        document.getElementById('host-key-type').textContent = result.keyType;
+        document.getElementById('host-fingerprint').textContent = result.fingerprint;
+        document.getElementById('host-trust-label').textContent = result.alreadyTrusted ? 'TRUSTED SSH HOST KEY' : 'NEW SSH HOST KEY';
+        document.getElementById('host-trust-field').hidden = result.alreadyTrusted;
+        document.getElementById('host-setup').hidden = false;
+        document.getElementById('host-password').focus();
+        return;
+      }
+    } else {
+      if (!pendingHostSetup.alreadyTrusted && !document.getElementById('host-trust').checked) throw new Error('Verify the host fingerprint and check the confirmation box before continuing.');
+      await api.setupHost(pendingHostSetup.token, document.getElementById('host-password').value);
+    }
     if (!state.hosts.includes(host)) state.hosts.push(host);
     ui.hostDialog.close();
     await selectHost(host);
   } catch (error) {
-    errorNode.textContent = `${error.message} Set up SSH keys and accept the host key in a terminal first.`;
+    errorNode.textContent = error.message;
     errorNode.hidden = false;
   } finally {
     saveButton.disabled = false;
-    saveButton.textContent = 'Connect';
+    saveButton.textContent = pendingHostSetup ? 'Trust and install key' : 'Connect';
   }
 });
 document.getElementById('remove-host').addEventListener('click', async () => {

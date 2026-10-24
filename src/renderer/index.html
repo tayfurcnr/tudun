@@ -108,9 +108,14 @@
   </dialog>
   <dialog id="host-dialog" class="host-dialog" aria-labelledby="host-dialog-title">
     <form id="host-form">
-      <div class="unit-dialog-header"><div><span class="unit-eyebrow">SSH COMPUTER</span><h2 id="host-dialog-title">Add computer</h2><p>View services and logs, or edit units over an existing SSH key connection.</p></div><button type="button" class="unit-close" id="host-cancel-top" aria-label="Close">×</button></div>
+      <div class="unit-dialog-header"><div><span class="unit-eyebrow">SSH COMPUTER</span><h2 id="host-dialog-title">Add computer</h2><p>Connect securely to another computer and manage its services.</p></div><button type="button" class="unit-close" id="host-cancel-top" aria-label="Close">×</button></div>
       <label class="unit-field">SSH destination<input id="host-address" required placeholder="user@192.168.1.20" autocomplete="off" spellcheck="false"></label>
-      <p class="unit-help">Connect once in a terminal first: <code>ssh user@192.168.1.20</code>. Accept its host key there and configure SSH key authentication. Creating or editing a unit asks for remote sudo access.</p>
+      <div id="host-setup" hidden>
+        <div class="host-fingerprint"><span id="host-trust-label">NEW SSH HOST KEY</span><strong id="host-key-type"></strong><code id="host-fingerprint"></code><small>Compare this fingerprint with the SSH host key on the remote computer before trusting it.</small></div>
+        <label class="host-trust-check" id="host-trust-field"><input id="host-trust" type="checkbox"> I verified this fingerprint belongs to the remote computer</label>
+        <label class="unit-field">Remote user's SSH password<input id="host-password" type="password" autocomplete="new-password" placeholder="Used once to install the Tudun SSH key"><small>The password is used for this connection and is not stored.</small></label>
+      </div>
+      <p class="unit-help">Tudun creates its own SSH key for future connections. Creating or editing a service may ask separately for remote sudo access.</p>
       <div class="unit-error" id="host-error" role="alert" hidden></div>
       <div class="unit-dialog-actions"><button class="button button-quiet" type="button" id="host-cancel">Cancel</button><button class="button button-primary" type="submit" id="host-save">Connect</button></div>
     </form>
