@@ -169,6 +169,7 @@ h1, h2, p { margin: 0; }
 .confirm-dialog h2 { margin-top: 16px; font-size: 17px; }
 .confirm-dialog p { margin-top: 8px; color: var(--muted); font-size: 13px; line-height: 1.5; }
 .confirm-dialog .unit-field small { color: var(--muted); font-size: 11px; font-weight: 400; line-height: 1.4; }
+.logs-toolbar #remote-log-admin[aria-pressed="true"] { color: #f1b684; background: #3b281d; border-color: #754a2d; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 22px; }
 .button-primary { color: white; background: #b75e30; border: 1px solid #d47b46; }
 .button-primary:hover { background: #cd7440; }

@@ -10,11 +10,11 @@ The application package bundles Electron. You do not need Node.js to run the ins
 
 ## Install a ready-made `.deb`
 
-Download the package for your computer from the [v1.4.0 release](https://github.com/tayfurcnr/tudun/releases/tag/v1.4.0). Choose `arm64` for Jetson or `amd64` for a typical x64 PC. For Jetson:
+Download the package for your computer from the [v1.5.0 release](https://github.com/tayfurcnr/tudun/releases/tag/v1.5.0). Choose `arm64` for Jetson or `amd64` for a typical x64 PC. For Jetson:
 
 ```bash
-wget https://github.com/tayfurcnr/tudun/releases/download/v1.4.0/tudun_1.4.0_arm64.deb
-sudo apt install ./tudun_1.4.0_arm64.deb
+wget https://github.com/tayfurcnr/tudun/releases/download/v1.5.0/tudun_1.5.0_arm64.deb
+sudo apt install ./tudun_1.5.0_arm64.deb
 ```
 
 For an x64 Ubuntu PC, replace `arm64` with `amd64` in both lines. `apt` installs required Ubuntu libraries automatically. Node.js, npm, and a source checkout are not required on the computer where you install the package.
@@ -29,7 +29,7 @@ Use **Add service** to create a unit under `/etc/systemd/system`. Select a servi
 
 Choose **Add computer** in Tudun's sidebar and enter `user@remote-host`. If an SSH key connection already works, Tudun connects immediately. Otherwise it shows the remote host-key fingerprint. Compare that fingerprint with the remote computer before confirming, then enter the remote user's SSH password. Tudun installs its own key in the remote user's `~/.ssh/authorized_keys` and remembers the approved host key locally. It does not store the password. The remote SSH server must allow password login for this first-time setup; if it does not, an administrator must configure SSH key access separately.
 
-You can then switch between this computer and saved remote computers. Tudun can view remote service status and logs, start/stop/restart services, enable or disable startup, and add, edit, or delete local unit files. Each privileged operation asks for the remote sudo password; leave it blank only when that account has passwordless sudo for the command. Deletion stops and disables the service, removes its unit file under `/etc/systemd/system`, and reloads systemd. Package-provided units cannot be deleted. Saving an edit reloads systemd but does not start or restart the service. Remote resource analysis is not available yet. The remote user needs permission to read the desired journal entries; Tudun does not save SSH or sudo passwords or bypass host-key checking.
+You can then switch between this computer and saved remote computers. Tudun can view remote service status, logs, and live CPU/RAM analysis; start/stop/restart services; enable or disable startup; and add, edit, or delete local unit files. Each privileged operation asks for the remote sudo password; leave it blank only when that account has passwordless sudo for the command. Deletion stops and disables the service, removes its unit file under `/etc/systemd/system`, and reloads systemd. Package-provided units cannot be deleted. Saving an edit reloads systemd but does not start or restart the service. Remote logs initially use the SSH user's journal permissions. If those are insufficient, select **Admin logs** and enter the remote sudo password when opening live or historical logs. Tudun does not save SSH or sudo passwords or bypass host-key checking.
 
 To remove the installed package:
 
@@ -63,7 +63,7 @@ npm ci
 npm run package:deb
 ```
 
-The resulting file is `dist/tudun_1.4.0_amd64.deb` on x64 Ubuntu.
+The resulting file is `dist/tudun_1.5.0_amd64.deb` on x64 Ubuntu.
 
 ## Build a Jetson package from source
 
@@ -73,10 +73,10 @@ JetPack 5 uses an Ubuntu 20.04 based root file system, and JetPack 6 uses Ubuntu
 npm run package:deb:arm64
 ```
 
-This downloads the Linux arm64 Electron runtime into an isolated temporary build directory and creates `dist/tudun_1.4.0_arm64.deb`. Copy that file to the Jetson, then install it there:
+This downloads the Linux arm64 Electron runtime into an isolated temporary build directory and creates `dist/tudun_1.5.0_arm64.deb`. Copy that file to the Jetson, then install it there:
 
 ```bash
-sudo apt install ./tudun_1.4.0_arm64.deb
+sudo apt install ./tudun_1.5.0_arm64.deb
 ```
 
 Open **Tudun** from the application menu. A desktop session and a working Polkit agent are required for the interface and privileged service operations. A headless SSH session alone cannot show the desktop window. JetPack 5 packaging has been exercised on a physical device, but the updated sandbox helper and JetPack 6 have not yet been verified there.

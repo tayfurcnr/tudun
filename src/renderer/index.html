@@ -93,6 +93,7 @@
         <select id="severity-filter" aria-label="Log level"><option value="all">All</option><option value="info">Info</option><option value="warn">Warning</option><option value="error">Error</option></select>
         <select id="history-range" aria-label="Log time range"><option value="live">Last 500</option><option value="hour">Last hour</option><option value="day">Last 24 hours</option><option value="week">Last 7 days</option></select>
         <button class="live-control" id="live-button"><i></i><span>Live</span></button>
+        <button class="button button-quiet" id="remote-log-admin" type="button" aria-pressed="false" title="Read remote logs using sudo" hidden>Admin logs</button>
         <button class="button button-quiet" id="pause-button" disabled>Ⅱ&nbsp; Pause</button>
         <button class="button button-quiet" id="clear-logs-button">⌫&nbsp; Clear</button>
         <button class="button button-quiet" id="export-logs-button">↓&nbsp; Export</button>
@@ -106,6 +107,13 @@
     <div class="dialog-icon">⚠</div><h2 id="confirm-title">Confirm action</h2><p id="confirm-message"></p>
     <label class="unit-field" id="confirm-password-field" hidden>Remote administrator password<input id="confirm-password" type="password" autocomplete="off" placeholder="Password for sudo on the remote computer"><small>Used for this operation only. Leave blank if remote sudo needs no password.</small></label>
     <div class="dialog-actions"><button class="button button-quiet" id="confirm-cancel">Cancel</button><button class="button button-primary" id="confirm-accept">Confirm</button></div>
+  </dialog>
+  <dialog id="log-auth-dialog" class="confirm-dialog" aria-labelledby="log-auth-title">
+    <form id="log-auth-form">
+      <h2 id="log-auth-title">Remote log access</h2><p id="log-auth-description"></p>
+      <label class="unit-field">Remote administrator password<input id="log-auth-password" type="password" autocomplete="off" placeholder="Password for sudo on the remote computer"><small>Used for this log request only. Leave blank if sudo needs no password.</small></label>
+      <div class="dialog-actions"><button class="button button-quiet" id="log-auth-cancel" type="button">Cancel</button><button class="button button-primary" type="submit">Read logs</button></div>
+    </form>
   </dialog>
   <dialog id="host-dialog" class="host-dialog" aria-labelledby="host-dialog-title">
     <form id="host-form">

@@ -14,6 +14,7 @@ const ui = {
   details: document.getElementById('service-details'),
   emptyDetail: document.getElementById('empty-detail'),
   dialog: document.getElementById('confirm-dialog'),
+  logAuthDialog: document.getElementById('log-auth-dialog'),
   unitDialog: document.getElementById('unit-dialog'),
   analysisDialog: document.getElementById('analysis-dialog'),
   hostDialog: document.getElementById('host-dialog'),
@@ -43,6 +44,7 @@ const state = {
   logLines: [],
   logPaused: false,
   logLive: false,
+  logAdmin: false,
   unitDraft: null,
   analysis: null
 };
@@ -54,6 +56,9 @@ function renderHosts() {
   ui.hostSelect.replaceChildren(new Option('This computer', 'local'), ...state.hosts.map((host) => new Option(host, host)));
   ui.hostSelect.value = state.host;
   document.getElementById('remove-host').hidden = !remoteSelected();
+  const adminLogs = document.getElementById('remote-log-admin');
+  adminLogs.hidden = !remoteSelected();
+  adminLogs.setAttribute('aria-pressed', String(state.logAdmin && remoteSelected()));
   document.getElementById('add-service').disabled = false;
   document.getElementById('add-service').title = remoteSelected() ? `Create a service on ${state.host}` : '';
   document.querySelector('.sidebar-footer .system-pill').lastChild.textContent = remoteSelected() ? ` ${state.host}` : ' Ubuntu · systemd';
@@ -63,6 +68,7 @@ async function selectHost(host) {
   if (host !== 'local' && !state.hosts.includes(host)) return;
   state.hostEpoch += 1;
   state.host = host;
+  state.logAdmin = false;
   state.refreshing = false;
   if (ui.analysisDialog.open) ui.analysisDialog.close();
   await stopLiveLogs();
@@ -74,7 +80,7 @@ async function selectHost(host) {
   document.getElementById('logs-status').textContent = 'Waiting for logs';
   document.getElementById('refresh-status').textContent = `Connecting to ${host === 'local' ? 'this computer' : host}…`;
   document.getElementById('system-state').textContent = host === 'local' ? 'System services' : host;
-  document.getElementById('view-description').textContent = host === 'local' ? views[state.view][1] : `Viewing ${host} · unit editing available`;
+  document.getElementById('view-description').textContent = host === 'local' ? views[state.view][1] : `Viewing ${host}`;
   ui.list.innerHTML = '<div class="list-empty"><strong>Loading services…</strong><p>Connecting to the selected computer.</p></div>';
   renderHosts();
   renderCounts();
@@ -192,7 +198,7 @@ function renderList() {
       <span class="service-description" title="${escapeHtml(service.description)}">${escapeHtml(service.description || 'No description')}</span>
       <span class="status-badge ${statusClass(service)}">${escapeHtml(statusLabel(service))}</span>
       <span class="startup-badge ${startupClass(service)}">${escapeHtml(startupLabel(service))}</span>
-      <button class="analyze-button" type="button" data-analyze="${escapeHtml(service.name)}" aria-label="Analyze ${escapeHtml(service.name)}" ${remoteSelected() ? 'disabled title="Analysis is available for this computer only"' : ''}><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M2 15h16M4 12l4-4 3 2 5-6"/></svg>Analyze</button>
+      <button class="analyze-button" type="button" data-analyze="${escapeHtml(service.name)}" aria-label="Analyze ${escapeHtml(service.name)}"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M2 15h16M4 12l4-4 3 2 5-6"/></svg>Analyze</button>
     </div>`).join('');
   ui.list.scrollTop = previousScrollTop;
   renderDetails();
@@ -268,7 +274,7 @@ async function sampleAnalysis(analysis) {
   if (state.analysis !== analysis || analysis.busy) return;
   analysis.busy = true;
   try {
-    const sample = await api.serviceMetrics(analysis.unit, state.host);
+    const sample = await api.serviceMetrics(analysis.unit, analysis.target);
     if (state.analysis !== analysis) return;
     let cpuPercent = null;
     if (analysis.previous && (analysis.previous.active !== sample.active || analysis.previous.pid !== sample.pid)) {
@@ -295,14 +301,13 @@ async function sampleAnalysis(analysis) {
 }
 
 function openAnalysis(unit) {
-  if (remoteSelected()) return;
   const service = state.services.find((item) => item.name === unit);
   if (!service) return;
   if (ui.analysisDialog.open) ui.analysisDialog.close();
-  const analysis = { unit, previous: null, cpuHistory: [], memoryHistory: [], busy: false, timer: null };
+  const analysis = { unit, target: state.host, previous: null, cpuHistory: [], memoryHistory: [], busy: false, timer: null };
   state.analysis = analysis;
   document.getElementById('analysis-title').textContent = unit;
-  document.getElementById('analysis-description').textContent = service.description || 'Live resource usage';
+  document.getElementById('analysis-description').textContent = `${state.host === 'local' ? 'This computer' : state.host} · ${service.description || 'Live resource usage'}`;
   for (const id of ['analysis-cpu', 'analysis-memory', 'analysis-tasks', 'analysis-peak']) document.getElementById(id).textContent = '—';
   document.getElementById('analysis-state').textContent = 'Connecting…';
   document.getElementById('analysis-updated').textContent = 'Waiting for first sample';
@@ -465,7 +470,7 @@ function setView(view) {
   state.view = view;
   document.querySelectorAll('.nav-item').forEach((item) => item.classList.toggle('selected', item.dataset.view === view));
   document.getElementById('view-heading').textContent = views[view][0];
-  document.getElementById('view-description').textContent = remoteSelected() ? `Viewing ${state.host} · unit editing available` : views[view][1];
+  document.getElementById('view-description').textContent = remoteSelected() ? `Viewing ${state.host}` : views[view][1];
   renderList();
 }
 
@@ -621,20 +626,48 @@ async function stopLiveLogs() {
   document.getElementById('pause-button').disabled = true;
 }
 
+let resolveLogAuth = null;
+function requestRemoteLogPassword(unit) {
+  if (ui.logAuthDialog.open) return Promise.resolve(null);
+  document.getElementById('log-auth-description').textContent = `Read ${unit} logs on ${state.host} using sudo.`;
+  document.getElementById('log-auth-password').value = '';
+  ui.logAuthDialog.showModal();
+  document.getElementById('log-auth-password').focus();
+  return new Promise((resolve) => { resolveLogAuth = resolve; });
+}
+document.getElementById('log-auth-form').addEventListener('submit', (event) => {
+  event.preventDefault();
+  const resolve = resolveLogAuth;
+  resolveLogAuth = null;
+  const password = document.getElementById('log-auth-password').value;
+  ui.logAuthDialog.close();
+  resolve?.(password);
+});
+document.getElementById('log-auth-cancel').addEventListener('click', () => ui.logAuthDialog.close());
+ui.logAuthDialog.addEventListener('close', () => {
+  document.getElementById('log-auth-password').value = '';
+  if (resolveLogAuth) { const resolve = resolveLogAuth; resolveLogAuth = null; resolve(null); }
+});
+
 async function startLiveLogs() {
   if (!state.selected) return;
+  const selectedUnit = state.selected;
+  const target = state.host;
+  const password = remoteSelected() && state.logAdmin ? await requestRemoteLogPassword(selectedUnit) : null;
+  if (remoteSelected() && state.logAdmin && password === null) return;
+  if (state.selected !== selectedUnit || state.host !== target) return;
   await stopLiveLogs();
   state.logLines = [];
   state.logPaused = false;
   document.getElementById('pause-button').textContent = 'Ⅱ  Pause';
   renderLogs();
   try {
-    await api.startLogs(state.selected, 500, state.host);
+    await api.startLogs(selectedUnit, 500, target, password);
     state.logLive = true;
     document.getElementById('live-button').classList.add('is-live');
     document.getElementById('live-button').innerHTML = '<i></i><span>Live</span>';
     document.getElementById('pause-button').disabled = false;
-    document.getElementById('logs-status').textContent = `Live logs for ${state.selected} · ${remoteSelected() ? 'SSH' : 'Polkit may request authorization'}`;
+    document.getElementById('logs-status').textContent = `Live logs for ${selectedUnit} · ${remoteSelected() ? (state.logAdmin ? 'SSH + sudo' : 'SSH') : 'Polkit may request authorization'}`;
   } catch (error) {
     document.getElementById('logs-status').textContent = error.message;
     showToast(error.message, 'error');
@@ -644,13 +677,16 @@ async function startLiveLogs() {
 async function loadHistory(range) {
   if (!state.selected || range === 'live') return;
   const selectedUnit = state.selected;
+  const target = state.host;
+  const password = remoteSelected() && state.logAdmin ? await requestRemoteLogPassword(selectedUnit) : null;
+  if (remoteSelected() && state.logAdmin && password === null) return;
+  if (state.selected !== selectedUnit || state.host !== target) return;
   await stopLiveLogs();
   state.logLines = [];
   ui.logs.innerHTML = '<div class="log-empty">Loading log history…</div>';
   document.getElementById('logs-status').textContent = `Loading history for ${state.selected}…`;
   try {
-    const target = state.host;
-    const output = await api.readHistory(selectedUnit, range, 500, target);
+    const output = await api.readHistory(selectedUnit, range, 500, target, password);
     if (state.selected !== selectedUnit || state.host !== target) return;
     state.logLines = output.split(/\r?\n/).filter(Boolean);
     renderLogs();
@@ -685,7 +721,7 @@ async function initialize() {
   document.body.dataset.theme = state.theme;
   renderPanelVisibility();
   renderHosts();
-  document.getElementById('view-description').textContent = remoteSelected() ? `Viewing ${state.host} · unit editing available` : views[state.view][1];
+  document.getElementById('view-description').textContent = remoteSelected() ? `Viewing ${state.host}` : views[state.view][1];
   await refreshServices();
   setInterval(() => refreshServices(true), 5000);
 }
@@ -884,6 +920,12 @@ document.getElementById('live-button').addEventListener('click', () => {
   if (state.logLive) stopLiveLogs();
   else if (document.getElementById('history-range').value === 'live') startLiveLogs();
   else loadHistory(document.getElementById('history-range').value);
+});
+document.getElementById('remote-log-admin').addEventListener('click', async () => {
+  state.logAdmin = !state.logAdmin;
+  document.getElementById('remote-log-admin').setAttribute('aria-pressed', String(state.logAdmin));
+  if (state.logLive) await stopLiveLogs();
+  document.getElementById('logs-status').textContent = state.logAdmin ? 'Admin logs selected. Click Live or choose a time range.' : 'User logs selected. Click Live or choose a time range.';
 });
 document.getElementById('history-range').addEventListener('change', (event) => {
   if (event.target.value !== 'live') loadHistory(event.target.value);

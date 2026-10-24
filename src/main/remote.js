@@ -205,12 +205,70 @@ async function listServices(host) {
   return services;
 }
 
-async function readHistory(host, unit, range, limit = 500) {
+const METRICS_SCRIPT = String.raw`
+import json, os, re, subprocess, sys, time
+unit = sys.argv[1]
+if not re.fullmatch(r'[A-Za-z0-9_.:@-]+\.service', unit) or len(unit) > 200 or '..' in unit:
+    sys.exit('Invalid service name')
+properties = 'Id,ActiveState,MainPID,ControlGroup,CPUUsageNSec,MemoryCurrent,MemoryPeak,TasksCurrent,ActiveEnterTimestamp'
+result = subprocess.run(['systemctl', 'show', '--no-pager', '--property=' + properties, '--', unit], capture_output=True, text=True, timeout=15)
+if result.returncode:
+    sys.exit(result.stderr.strip() or 'Could not read service metrics')
+item = dict(line.split('=', 1) for line in result.stdout.splitlines() if '=' in line)
+def number(value):
+    return int(value) if value and value.isdecimal() else None
+metrics = {
+    'unit': unit, 'active': item.get('ActiveState') or 'unknown',
+    'pid': number(item.get('MainPID')), 'cpuUsageNs': item.get('CPUUsageNSec') if (item.get('CPUUsageNSec') or '').isdecimal() else None,
+    'memoryBytes': number(item.get('MemoryCurrent')), 'peakBytes': number(item.get('MemoryPeak')),
+    'tasks': number(item.get('TasksCurrent')), 'source': 'systemd',
+    'since': item.get('ActiveEnterTimestamp') or '', 'sampledAtNs': str(time.monotonic_ns())
+}
+group = item.get('ControlGroup') or ''
+if group.startswith('/') and group != '/' and '..' not in group.split('/'):
+    base = '/sys/fs/cgroup'
+    directory = os.path.realpath(os.path.join(base, group.lstrip('/')))
+    if directory.startswith(base + '/'):
+        def read(name):
+            try:
+                with open(os.path.join(directory, name), encoding='utf-8') as stream:
+                    return stream.read(8192).strip()
+            except (OSError, UnicodeError):
+                return None
+        cpu_stat = read('cpu.stat')
+        if cpu_stat:
+            match = re.search(r'^usage_usec\s+(\d+)$', cpu_stat, re.M)
+            if match:
+                metrics['cpuUsageNs'] = str(int(match.group(1)) * 1000)
+                metrics['source'] = 'cgroup v2'
+        for field, name in [('memoryBytes', 'memory.current'), ('peakBytes', 'memory.peak'), ('tasks', 'pids.current')]:
+            value = read(name)
+            if value is not None:
+                metrics[field] = number(value)
+print(json.dumps(metrics, separators=(',', ':')))
+`;
+const METRICS_COMMAND = `/usr/bin/python3 -c 'import base64;exec(base64.b64decode("${Buffer.from(METRICS_SCRIPT).toString('base64')}"))'`;
+
+async function serviceMetrics(host, unit) {
+  assertUnit(host, unit);
+  const output = await run(host, `${METRICS_COMMAND} ${unit}`, 25000);
+  try {
+    const metrics = JSON.parse(output);
+    if (metrics.unit !== unit || !/^[0-9]+$/.test(metrics.sampledAtNs || '') ||
+        (metrics.cpuUsageNs !== null && !/^[0-9]+$/.test(metrics.cpuUsageNs || ''))) throw new Error('Invalid metrics response.');
+    return metrics;
+  } catch (error) {
+    throw new Error(`Could not read remote service metrics: ${error.message}`);
+  }
+}
+
+async function readHistory(host, unit, range, limit = 500, password = null) {
   assertUnit(host, unit);
   const since = { hour: '1 hour ago', day: '24 hours ago', week: '7 days ago' }[range];
   if (!since) throw new Error('Invalid log time range.');
   const lines = Math.max(1, Math.min(Number(limit) || 500, 2000));
-  return run(host, `journalctl --no-pager --lines=${lines} --since='${since}' --output=json --unit=${unit}`, 60000);
+  const command = `journalctl --no-pager --lines=${lines} --since='${since}' --output=json --unit=${unit}`;
+  return password === null ? run(host, command, 60000) : privilegedCommand(host, command, password, 60000, 8 * 1024 * 1024);
 }
 
 const digest = (content) => crypto.createHash('sha256').update(content).digest('hex');
@@ -273,7 +331,7 @@ function validatePassword(password) {
   }
 }
 
-function privilegedCommand(host, command, password, timeout = 120000) {
+function privilegedCommand(host, command, password, timeout = 120000, maxOutput = 8192) {
   validateHost(host);
   validatePassword(password);
   const sudo = password ? `sudo -S -p '' ${command}` : `sudo -n ${command}`;
@@ -287,7 +345,10 @@ function privilegedCommand(host, command, password, timeout = 120000) {
       if (error) reject(error); else resolve(stdout);
     };
     const timer = setTimeout(() => { child.kill('SIGTERM'); finish(new Error('Remote operation timed out.')); }, timeout);
-    child.stdout.on('data', (chunk) => { stdout += chunk.toString().slice(0, Math.max(0, 8192 - stdout.length)); });
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk.toString();
+      if (stdout.length > maxOutput) { child.kill('SIGTERM'); finish(new Error('Remote output exceeded the allowed size.')); }
+    });
     child.stderr.on('data', (chunk) => { stderr += chunk.toString().slice(0, Math.max(0, 8192 - stderr.length)); });
     child.on('error', (error) => finish(error));
     child.on('close', (code) => finish(code === 0 ? null : new Error(stderr.trim() || stdout.trim() || 'Remote operation failed.')));
@@ -318,13 +379,20 @@ function stopLogs() {
   logProcess = null;
 }
 
-function startLogs(host, unit, sender, limit = 500) {
+function startLogs(host, unit, sender, limit = 500, password = null) {
   assertUnit(host, unit);
+  if (password !== null) validatePassword(password);
   stopLogs();
   const lines = Math.max(1, Math.min(Number(limit) || 500, 2000));
+  const command = `journalctl --follow --lines=${lines} --no-pager --output=json --unit=${unit}`;
+  const remoteCommand = password === null ? command : (password ? `sudo -S -p '' ${command}` : `sudo -n ${command}`);
   const child = spawn('ssh', [...SSH_OPTIONS, host,
-    `journalctl --follow --lines=${lines} --no-pager --output=json --unit=${unit}`
-  ], { stdio: ['ignore', 'pipe', 'pipe'] });
+    remoteCommand
+  ], { stdio: [password ? 'pipe' : 'ignore', 'pipe', 'pipe'] });
+  if (password) {
+    child.stdin.on('error', () => {});
+    child.stdin.end(`${password}\n`);
+  }
   logProcess = child;
   let remainder = '';
   child.stdout.setEncoding('utf8');
@@ -348,4 +416,4 @@ function startLogs(host, unit, sender, limit = 500) {
   });
 }
 
-module.exports = { validateHost, checkHost, inspectHost, setupHost, listServices, serviceAction, getUnitDraft, saveUnitDraft, deleteService, readHistory, startLogs, stopLogs };
+module.exports = { validateHost, checkHost, inspectHost, setupHost, listServices, serviceMetrics, serviceAction, getUnitDraft, saveUnitDraft, deleteService, readHistory, startLogs, stopLogs };

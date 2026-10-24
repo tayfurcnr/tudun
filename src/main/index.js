@@ -9,9 +9,6 @@ let settingsWrite = Promise.resolve();
 const settingsFile = () => path.join(app.getPath('userData'), 'settings.json');
 
 function registerIpc() {
-  const localOnly = (target) => {
-    if (target !== 'local') throw new Error('Remote hosts are read-only. Select This computer to change services.');
-  };
   ipcMain.handle('window:control', (event, action) => {
     const window = BrowserWindow.fromWebContents(event.sender);
     if (!window || !['minimize', 'maximize', 'close'].includes(action)) throw new Error('Invalid window action.');
@@ -28,8 +25,7 @@ function registerIpc() {
   ipcMain.handle('hosts:setup', (_event, token, password) => remote.setupHost(token, password));
   ipcMain.handle('services:list', (_event, target = 'local') => target === 'local' ? systemd.listServices() : remote.listServices(target));
   ipcMain.handle('service:metrics', (_event, unit, target = 'local') => {
-    localOnly(target);
-    return systemd.serviceMetrics(unit);
+    return target === 'local' ? systemd.serviceMetrics(unit) : remote.serviceMetrics(target, unit);
   });
   ipcMain.handle('settings:load', async () => {
     try {
@@ -67,10 +63,10 @@ function registerIpc() {
   ipcMain.handle('unit:draft', (_event, unit, target = 'local') => target === 'local' ? systemd.getUnitDraft(unit) : remote.getUnitDraft(target, unit));
   ipcMain.handle('unit:save', (_event, draft, target = 'local', password = '') => target === 'local' ? systemd.saveUnitDraft(draft) : remote.saveUnitDraft(target, draft, password));
   ipcMain.handle('unit:delete', (_event, unit, target = 'local', password = '') => target === 'local' ? systemd.deleteService(unit) : remote.deleteService(target, unit, password));
-  ipcMain.handle('logs:history', (_event, unit, range, limit, target = 'local') => target === 'local' ? systemd.readHistory(unit, range, limit) : remote.readHistory(target, unit, range, limit));
-  ipcMain.handle('logs:start', (event, unit, limit, target = 'local') => {
+  ipcMain.handle('logs:history', (_event, unit, range, limit, target = 'local', password = null) => target === 'local' ? systemd.readHistory(unit, range, limit) : remote.readHistory(target, unit, range, limit, password));
+  ipcMain.handle('logs:start', (event, unit, limit, target = 'local', password = null) => {
     if (target === 'local') systemd.startLogs(unit, event.sender, limit);
-    else remote.startLogs(target, unit, event.sender, limit);
+    else remote.startLogs(target, unit, event.sender, limit, password);
     return true;
   });
   ipcMain.handle('logs:stop', () => {

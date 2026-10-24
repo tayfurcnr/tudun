@@ -13,9 +13,9 @@ contextBridge.exposeInMainWorld('serviceManager', Object.freeze({
   getUnitDraft: (unit, target) => ipcRenderer.invoke('unit:draft', unit, target),
   saveUnitDraft: (draft, target, password) => ipcRenderer.invoke('unit:save', draft, target, password),
   deleteService: (unit, target, password) => ipcRenderer.invoke('unit:delete', unit, target, password),
-  readHistory: (unit, range, limit, target) => ipcRenderer.invoke('logs:history', unit, range, limit, target),
+  readHistory: (unit, range, limit, target, password) => ipcRenderer.invoke('logs:history', unit, range, limit, target, password),
   exportLogs: (content) => ipcRenderer.invoke('logs:export', content),
-  startLogs: (unit, limit, target) => ipcRenderer.invoke('logs:start', unit, limit, target),
+  startLogs: (unit, limit, target, password) => ipcRenderer.invoke('logs:start', unit, limit, target, password),
   stopLogs: () => ipcRenderer.invoke('logs:stop'),
   onLogLine: (callback) => {
     const listener = (_event, line) => callback(line);
