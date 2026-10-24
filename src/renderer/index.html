@@ -24,6 +24,12 @@
     </header>
 
     <aside class="sidebar">
+      <div class="host-section">
+        <label class="nav-section-label" for="host-select">COMPUTER</label>
+        <select id="host-select" aria-label="Select computer"><option value="local">This computer</option></select>
+        <div class="host-actions"><button type="button" id="add-host" title="Add SSH computer">+ Add computer</button><button type="button" id="remove-host" title="Remove selected computer" aria-label="Remove selected computer" hidden>×</button></div>
+      </div>
+      <div class="sidebar-divider"></div>
       <div class="nav-section-label">VIEWS</div>
       <nav class="view-nav" aria-label="Service views">
         <button class="nav-item selected" data-view="all"><span class="nav-icon">☷</span><span>All Services</span><span class="nav-count" id="all-count">—</span></button>
@@ -34,7 +40,7 @@
       </nav>
       <div class="sidebar-divider"></div>
       <div class="nav-section-label">SYSTEMD</div>
-      <div class="sidebar-note">Manage startup behavior from the service details panel.</div>
+      <div class="sidebar-note">Create and edit service units locally or over SSH. Runtime controls stay local.</div>
       <div class="sidebar-footer"><span class="system-pill"><i></i> Ubuntu · systemd</span></div>
     </aside>
 
@@ -69,12 +75,12 @@
             <div><dt>Last result</dt><dd id="detail-result">—</dd></div>
           </dl>
           <div class="detail-actions">
-            <button class="action-tile" data-action="start"><span>▶</span>Start</button>
-            <button class="action-tile danger-tile" data-action="stop"><span>■</span>Stop</button>
-            <button class="action-tile" data-action="restart"><span>⟳</span>Restart</button>
-            <button class="action-tile" id="open-live-logs"><span>▤</span>Open logs</button>
-            <button class="action-tile" id="edit-service"><span>✎</span>Edit unit</button>
-            <button class="action-tile danger-tile" id="delete-service"><span>⌫</span>Delete service</button>
+            <button class="action-tile action-start" type="button" data-action="start"><span class="tile-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 5 11 7-11 7V5Z"/></svg></span><span class="tile-label">Start</span></button>
+            <button class="action-tile action-stop" type="button" data-action="stop"><span class="tile-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg></span><span class="tile-label">Stop</span></button>
+            <button class="action-tile action-restart" type="button" data-action="restart"><span class="tile-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 8a8 8 0 1 0 1 7M19 4v5h-5"/></svg></span><span class="tile-label">Restart</span></button>
+            <button class="action-tile action-logs" type="button" id="open-live-logs"><span class="tile-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="4" width="14" height="16" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></svg></span><span class="tile-label">Open logs</span></button>
+            <button class="action-tile action-edit" type="button" id="edit-service"><span class="tile-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 17-.5 3.5L8 20l10-10-3-3L5 17ZM13.5 8.5l3 3M15 7l2-2a2.1 2.1 0 0 1 3 3l-2 2"/></svg></span><span class="tile-label">Edit unit</span></button>
+            <button class="action-tile action-delete" type="button" id="delete-service"><span class="tile-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M9 7V5h6v2M7 7l1 13h8l1-13M10 10v7M14 10v7"/></svg></span><span class="tile-label">Delete service</span></button>
           </div>
         </div>
       </aside>
@@ -100,6 +106,15 @@
     <div class="dialog-icon">⚠</div><h2 id="confirm-title">Confirm action</h2><p id="confirm-message"></p>
     <div class="dialog-actions"><button class="button button-quiet" id="confirm-cancel">Cancel</button><button class="button button-primary" id="confirm-accept">Confirm</button></div>
   </dialog>
+  <dialog id="host-dialog" class="host-dialog" aria-labelledby="host-dialog-title">
+    <form id="host-form">
+      <div class="unit-dialog-header"><div><span class="unit-eyebrow">SSH COMPUTER</span><h2 id="host-dialog-title">Add computer</h2><p>View services and logs, or edit units over an existing SSH key connection.</p></div><button type="button" class="unit-close" id="host-cancel-top" aria-label="Close">×</button></div>
+      <label class="unit-field">SSH destination<input id="host-address" required placeholder="user@192.168.1.20" autocomplete="off" spellcheck="false"></label>
+      <p class="unit-help">Connect once in a terminal first: <code>ssh user@192.168.1.20</code>. Accept its host key there and configure SSH key authentication. Creating or editing a unit asks for remote sudo access.</p>
+      <div class="unit-error" id="host-error" role="alert" hidden></div>
+      <div class="unit-dialog-actions"><button class="button button-quiet" type="button" id="host-cancel">Cancel</button><button class="button button-primary" type="submit" id="host-save">Connect</button></div>
+    </form>
+  </dialog>
   <dialog id="unit-dialog" class="unit-dialog">
     <form id="unit-form">
       <div class="unit-dialog-header"><div><span class="unit-eyebrow">SYSTEMD UNIT</span><h2 id="unit-dialog-title">Add service</h2><p id="unit-dialog-description">Create a service file in /etc/systemd/system.</p></div><button type="button" class="unit-close" id="unit-cancel-top" aria-label="Close editor">×</button></div>
@@ -107,6 +122,7 @@
       <label class="unit-field">Description<input id="unit-description" name="unit-description" maxlength="200" placeholder="What does this service do?" autocomplete="off"></label>
       <div class="unit-editor-meta"><span id="unit-target"></span><span>Changes require administrator authorization</span></div>
       <label class="unit-field">Unit file content<textarea id="unit-content" spellcheck="false" required></textarea></label>
+      <label class="unit-field" id="unit-auth-field" hidden>Remote administrator password<input id="unit-password" type="password" autocomplete="off" placeholder="Password for sudo on the remote computer"><small>Used once over SSH when saving; never stored by Tudun. Leave blank only if sudo needs no password.</small></label>
       <p class="unit-help" id="unit-help">Review the full unit file before saving. Saving reloads systemd; it does not start or restart the service.</p>
       <div class="unit-error" id="unit-error" role="alert" hidden></div>
       <div class="unit-dialog-actions"><button class="button button-quiet" type="button" id="unit-cancel">Cancel</button><button class="button button-primary" type="submit" id="unit-save">Save service</button></div>

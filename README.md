@@ -17,15 +17,18 @@ TUDUN is a desktop application for viewing and managing systemd services on Ubun
 - Inspect service status, PID, memory use, unit file, and recent result
 - Open per-service analysis with live CPU, memory, task counts, and short usage charts
 - Read live or historical journal logs, filter them, and export them
+- Add SSH computers to view services and logs and create or edit unit files
 - Switch between dark and light themes; collapse the navigation and details panels
 
 Service actions, unit writes, and journal access use Polkit authorization through `pkexec`. The application itself runs as the current user. Saving a unit reloads systemd; it does not start, enable, or restart the service.
 
 The **Analyze** button reads service-wide resource counters from cgroup v2 when available and falls back to systemd accounting properties on older hosts. CPU percentage is based on consecutive samples, where one fully used CPU core is 100%. Unavailable counters are shown as unavailable rather than estimated from an unrelated process.
 
+For a remote computer, establish key-based SSH access and accept its host key in a terminal first. Choose **Add computer**, enter `user@host`, and select it from the sidebar. Creating and editing remote units requires sudo access on that computer; Tudun asks for its administrator password only when saving and does not store it. Remote start/stop, startup changes, deletion, and resource analysis are not available in this version. Journal access depends on the remote user's permissions.
+
 ## Install
 
-For a packaged installation, download or build the `.deb` and follow [INSTALL.md](INSTALL.md). For development:
+For a packaged installation, download the [`arm64` Jetson or `amd64` PC `.deb` from Releases](https://github.com/tayfurcnr/tudun/releases/tag/v1.3.0) and follow [INSTALL.md](INSTALL.md). The installed application includes Electron; Node.js and npm are only needed to build from source. For development:
 
 ```bash
 npm ci
@@ -41,13 +44,13 @@ npm ci
 npm run package:deb
 ```
 
-This creates `dist/tudun_1.2.1_amd64.deb` on an x64 Ubuntu build machine. To create the Jetson package on an x64 or arm64 Linux build machine:
+This creates `dist/tudun_1.3.0_amd64.deb` on an x64 Ubuntu build machine. To create the Jetson package on an x64 or arm64 Linux build machine:
 
 ```bash
 npm run package:deb:arm64
 ```
 
-The output is `dist/tudun_1.2.1_arm64.deb`. It targets JetPack 5 (Ubuntu 20.04) and JetPack 6 (Ubuntu 22.04) desktop installations. JetPack 5 packaging has been exercised on a physical Jetson; see [INSTALL.md](INSTALL.md) for installation and device requirements.
+The output is `dist/tudun_1.3.0_arm64.deb`. It targets JetPack 5 (Ubuntu 20.04) and JetPack 6 (Ubuntu 22.04) desktop installations. JetPack 5 packaging has been exercised on a physical Jetson; see [INSTALL.md](INSTALL.md) for installation and device requirements.
 
 ## Project layout
 

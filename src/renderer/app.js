@@ -16,6 +16,8 @@ const ui = {
   dialog: document.getElementById('confirm-dialog'),
   unitDialog: document.getElementById('unit-dialog'),
   analysisDialog: document.getElementById('analysis-dialog'),
+  hostDialog: document.getElementById('host-dialog'),
+  hostSelect: document.getElementById('host-select'),
   logs: document.getElementById('log-output'),
   logsStatus: document.getElementById('logs-status'),
   lineCount: document.getElementById('log-line-count')
@@ -24,6 +26,9 @@ const ui = {
 const state = {
   services: [],
   favorites: new Set(),
+  hosts: [],
+  host: 'local',
+  hostEpoch: 0,
   view: 'all',
   search: '',
   selected: null,
@@ -41,6 +46,43 @@ const state = {
   unitDraft: null,
   analysis: null
 };
+
+const remoteSelected = () => state.host !== 'local';
+const favoriteKey = (unit) => state.host === 'local' ? unit : `${state.host}/${unit}`;
+
+function renderHosts() {
+  ui.hostSelect.replaceChildren(new Option('This computer', 'local'), ...state.hosts.map((host) => new Option(host, host)));
+  ui.hostSelect.value = state.host;
+  document.getElementById('remove-host').hidden = !remoteSelected();
+  document.getElementById('add-service').disabled = false;
+  document.getElementById('add-service').title = remoteSelected() ? `Create a service on ${state.host}` : '';
+  document.querySelector('.sidebar-footer .system-pill').lastChild.textContent = remoteSelected() ? ` ${state.host}` : ' Ubuntu · systemd';
+}
+
+async function selectHost(host) {
+  if (host !== 'local' && !state.hosts.includes(host)) return;
+  state.hostEpoch += 1;
+  state.host = host;
+  state.refreshing = false;
+  if (ui.analysisDialog.open) ui.analysisDialog.close();
+  await stopLiveLogs();
+  state.services = [];
+  state.selected = null;
+  state.logLines = [];
+  state.logPaused = false;
+  document.getElementById('history-range').value = 'live';
+  document.getElementById('logs-status').textContent = 'Waiting for logs';
+  document.getElementById('refresh-status').textContent = `Connecting to ${host === 'local' ? 'this computer' : host}…`;
+  document.getElementById('system-state').textContent = host === 'local' ? 'System services' : host;
+  document.getElementById('view-description').textContent = host === 'local' ? views[state.view][1] : `Viewing ${host} · unit editing available`;
+  ui.list.innerHTML = '<div class="list-empty"><strong>Loading services…</strong><p>Connecting to the selected computer.</p></div>';
+  renderHosts();
+  renderCounts();
+  renderDetails();
+  renderLogs();
+  persistSettings();
+  refreshServices();
+}
 
 const views = {
   all: ['All Services', 'View and manage system services'],
@@ -92,7 +134,7 @@ function startupClass(service) {
 function filteredServices() {
   const query = state.search.trim().toLocaleLowerCase('en');
   return state.services.filter((service) => {
-    if (state.view === 'favorites' && !state.favorites.has(service.name)) return false;
+    if (state.view === 'favorites' && !state.favorites.has(favoriteKey(service.name))) return false;
     if (state.view === 'running' && service.active !== 'active') return false;
     if (state.view === 'stopped' && service.active !== 'inactive') return false;
     if (state.view === 'failed' && service.active !== 'failed') return false;
@@ -145,12 +187,12 @@ function renderList() {
   }
   ui.list.innerHTML = rows.map((service) => `
     <div class="service-row service-grid${service.name === state.selected ? ' selected' : ''}" data-unit="${escapeHtml(service.name)}" role="option" aria-selected="${service.name === state.selected}">
-      <button class="service-star${state.favorites.has(service.name) ? ' is-favorite' : ''}" data-favorite="${escapeHtml(service.name)}" aria-label="Toggle favorite">${state.favorites.has(service.name) ? '★' : '☆'}</button>
+      <button class="service-star${state.favorites.has(favoriteKey(service.name)) ? ' is-favorite' : ''}" data-favorite="${escapeHtml(service.name)}" aria-label="Toggle favorite">${state.favorites.has(favoriteKey(service.name)) ? '★' : '☆'}</button>
       <span class="service-name" title="${escapeHtml(service.name)}">${escapeHtml(service.name)}</span>
       <span class="service-description" title="${escapeHtml(service.description)}">${escapeHtml(service.description || 'No description')}</span>
       <span class="status-badge ${statusClass(service)}">${escapeHtml(statusLabel(service))}</span>
       <span class="startup-badge ${startupClass(service)}">${escapeHtml(startupLabel(service))}</span>
-      <button class="analyze-button" type="button" data-analyze="${escapeHtml(service.name)}" aria-label="Analyze ${escapeHtml(service.name)}"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M2 15h16M4 12l4-4 3 2 5-6"/></svg>Analyze</button>
+      <button class="analyze-button" type="button" data-analyze="${escapeHtml(service.name)}" aria-label="Analyze ${escapeHtml(service.name)}" ${remoteSelected() ? 'disabled title="Analysis is available for this computer only"' : ''}><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M2 15h16M4 12l4-4 3 2 5-6"/></svg>Analyze</button>
     </div>`).join('');
   ui.list.scrollTop = previousScrollTop;
   renderDetails();
@@ -226,7 +268,7 @@ async function sampleAnalysis(analysis) {
   if (state.analysis !== analysis || analysis.busy) return;
   analysis.busy = true;
   try {
-    const sample = await api.serviceMetrics(analysis.unit);
+    const sample = await api.serviceMetrics(analysis.unit, state.host);
     if (state.analysis !== analysis) return;
     let cpuPercent = null;
     if (analysis.previous && (analysis.previous.active !== sample.active || analysis.previous.pid !== sample.pid)) {
@@ -253,6 +295,7 @@ async function sampleAnalysis(analysis) {
 }
 
 function openAnalysis(unit) {
+  if (remoteSelected()) return;
   const service = state.services.find((item) => item.name === unit);
   if (!service) return;
   if (ui.analysisDialog.open) ui.analysisDialog.close();
@@ -284,7 +327,7 @@ function renderDetails() {
   }
   document.getElementById('detail-name').textContent = service.name;
   document.getElementById('detail-description').textContent = service.description || 'No description';
-  const favorite = state.favorites.has(service.name);
+  const favorite = state.favorites.has(favoriteKey(service.name));
   const favoriteButton = document.getElementById('favorite-toggle');
   favoriteButton.textContent = favorite ? '★' : '☆';
   favoriteButton.setAttribute('aria-label', favorite ? 'Remove from favorites' : 'Add to favorites');
@@ -294,9 +337,9 @@ function renderDetails() {
   status.className = `status-badge ${statusClass(service)}`;
   const startupButton = document.getElementById('startup-toggle');
   const isEnabled = ['enabled', 'enabled-runtime'].includes(service.startup);
-  const cannotToggle = ['static', 'masked', 'masked-runtime', 'generated', 'transient'].includes(service.startup);
+  const cannotToggle = remoteSelected() || ['static', 'masked', 'masked-runtime', 'generated', 'transient'].includes(service.startup);
   startupButton.disabled = cannotToggle;
-  startupButton.title = service.startup === 'static' ? 'Static units cannot be enabled directly.' : (service.startup.startsWith('masked') ? 'Unmask this unit before changing its startup setting.' : '');
+  startupButton.title = remoteSelected() ? 'Remote computers are read-only' : (service.startup === 'static' ? 'Static units cannot be enabled directly.' : (service.startup.startsWith('masked') ? 'Unmask this unit before changing its startup setting.' : ''));
   const switchNode = document.getElementById('startup-switch');
   switchNode.classList.toggle('enabled', isEnabled);
   switchNode.classList.toggle('not-toggleable', cannotToggle);
@@ -309,14 +352,17 @@ function renderDetails() {
   document.getElementById('detail-file').title = service.file || '';
   const deleteButton = document.getElementById('delete-service');
   const localUnit = service.file === `/etc/systemd/system/${service.name}`;
-  deleteButton.disabled = !localUnit;
-  deleteButton.title = localUnit ? 'Delete this local service' : 'Package-provided services cannot be deleted here';
+  deleteButton.disabled = remoteSelected() || !localUnit;
+  deleteButton.title = remoteSelected() ? 'Remote computers are read-only' : (localUnit ? 'Delete this local service' : 'Package-provided services cannot be deleted here');
+  document.getElementById('edit-service').disabled = false;
+  document.getElementById('edit-service').title = remoteSelected() ? `Edit the unit on ${state.host}` : '';
+  document.querySelector('.detail-actions [data-action="restart"]').disabled = remoteSelected();
   document.getElementById('detail-since').textContent = formatTime(service.since);
   const result = service.result && service.result !== 'success' ? `${service.result} (exit ${service.exitCode || '—'})` : (service.active === 'failed' ? 'Failed' : 'Normal');
   document.getElementById('detail-result').textContent = result;
   document.getElementById('logs-unit').textContent = service.name;
-  document.querySelectorAll('.action-tile[data-action="start"]').forEach((button) => { button.disabled = service.active === 'active'; });
-  document.querySelectorAll('.action-tile[data-action="stop"]').forEach((button) => { button.disabled = service.active === 'inactive'; });
+  document.querySelectorAll('.action-tile[data-action="start"]').forEach((button) => { button.disabled = remoteSelected() || service.active === 'active'; });
+  document.querySelectorAll('.action-tile[data-action="stop"]').forEach((button) => { button.disabled = remoteSelected() || service.active === 'inactive'; });
 }
 
 const emptyRevision = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';
@@ -324,16 +370,18 @@ const emptyRevision = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7
 function openCreateUnit() {
   state.unitDraft = { mode: 'create', original: emptyRevision };
   document.getElementById('unit-dialog-title').textContent = 'Add service';
-  document.getElementById('unit-dialog-description').textContent = 'Create a system service in /etc/systemd/system.';
+  document.getElementById('unit-dialog-description').textContent = remoteSelected() ? `Create a system service on ${state.host}.` : 'Create a system service in /etc/systemd/system.';
   document.getElementById('unit-name').value = '';
   document.getElementById('unit-name').readOnly = false;
   document.getElementById('unit-description').value = 'My service';
   document.getElementById('unit-description').placeholder = 'What does this service do?';
   document.getElementById('unit-content').value = '[Unit]\nDescription=My service\nAfter=network.target\n\n[Service]\nType=simple\nExecStart=/usr/bin/my-command\nRestart=on-failure\n\n[Install]\nWantedBy=multi-user.target\n';
-  document.getElementById('unit-target').textContent = '/etc/systemd/system/<name>.service';
+  document.getElementById('unit-target').textContent = `${remoteSelected() ? `${state.host}: ` : ''}/etc/systemd/system/<name>.service`;
   document.getElementById('unit-help').textContent = 'Edit the template and review it before saving. Saving reloads systemd; it does not start or enable the service.';
   document.getElementById('unit-save').textContent = 'Create service';
   document.getElementById('unit-error').hidden = true;
+  document.getElementById('unit-auth-field').hidden = !remoteSelected();
+  document.getElementById('unit-password').value = '';
   ui.unitDialog.showModal();
   document.getElementById('unit-name').focus();
 }
@@ -343,7 +391,7 @@ async function openEditUnit() {
   const button = document.getElementById('edit-service');
   button.disabled = true;
   try {
-    const draft = await api.getUnitDraft(state.selected);
+    const draft = await api.getUnitDraft(state.selected, state.host);
     state.unitDraft = draft;
     document.getElementById('unit-dialog-title').textContent = `Edit ${draft.unit}`;
     document.getElementById('unit-dialog-description').textContent = draft.mode === 'local'
@@ -354,12 +402,14 @@ async function openEditUnit() {
     document.getElementById('unit-content').value = draft.content;
     document.getElementById('unit-description').value = draft.content.match(/^Description=(.*)$/m)?.[1] || '';
     document.getElementById('unit-description').placeholder = state.services.find((item) => item.name === draft.unit)?.description || 'What does this service do?';
-    document.getElementById('unit-target').textContent = draft.file;
+    document.getElementById('unit-target').textContent = `${remoteSelected() ? `${state.host}: ` : ''}${draft.file}`;
     document.getElementById('unit-help').textContent = draft.mode === 'override'
       ? 'For ExecStart changes, add ExecStart= on one line before the new ExecStart= command. Saving reloads systemd but does not restart the service.'
       : 'Saving reloads systemd but does not restart this service.';
     document.getElementById('unit-save').textContent = 'Save changes';
     document.getElementById('unit-error').hidden = true;
+    document.getElementById('unit-auth-field').hidden = !remoteSelected();
+    document.getElementById('unit-password').value = '';
     ui.unitDialog.showModal();
     document.getElementById('unit-content').focus();
   } catch (error) { showToast(error.message, 'error'); }
@@ -381,7 +431,8 @@ async function saveUnit(event) {
   saveButton.textContent = 'Saving…';
   errorNode.hidden = true;
   try {
-    await api.saveUnitDraft({ ...state.unitDraft, unit, content });
+    await api.saveUnitDraft({ ...state.unitDraft, unit, content }, state.host, document.getElementById('unit-password').value);
+    document.getElementById('unit-password').value = '';
     ui.unitDialog.close();
     state.selected = unit;
     state.view = 'all';
@@ -403,7 +454,7 @@ async function saveUnit(event) {
 
 function renderCounts() {
   document.getElementById('all-count').textContent = state.services.length;
-  document.getElementById('favorites-count').textContent = state.favorites.size;
+  document.getElementById('favorites-count').textContent = state.services.filter((item) => state.favorites.has(favoriteKey(item.name))).length;
   document.getElementById('running-count').textContent = state.services.filter((item) => item.active === 'active').length;
   document.getElementById('stopped-count').textContent = state.services.filter((item) => item.active === 'inactive').length;
   document.getElementById('failed-count').textContent = state.services.filter((item) => item.active === 'failed').length;
@@ -414,39 +465,46 @@ function setView(view) {
   state.view = view;
   document.querySelectorAll('.nav-item').forEach((item) => item.classList.toggle('selected', item.dataset.view === view));
   document.getElementById('view-heading').textContent = views[view][0];
-  document.getElementById('view-description').textContent = views[view][1];
+  document.getElementById('view-description').textContent = remoteSelected() ? `Viewing ${state.host} · unit editing available` : views[view][1];
   renderList();
 }
 
 async function refreshServices(silent = false) {
   if (state.refreshing) return;
+  const target = state.host;
+  const epoch = state.hostEpoch;
   state.refreshing = true;
   if (!silent) {
     document.getElementById('system-state').textContent = 'Refreshing';
     document.getElementById('refresh-button').classList.add('spinning');
   }
   try {
-    state.services = await api.listServices();
-    document.getElementById('system-state').textContent = 'System services';
+    const services = await api.listServices(target);
+    if (epoch !== state.hostEpoch) return;
+    state.services = services;
+    document.getElementById('system-state').textContent = target === 'local' ? 'System services' : target;
     document.querySelector('.system-indicator').classList.remove('offline');
     document.getElementById('refresh-status').textContent = `${state.services.length} services · updated ${new Date().toLocaleTimeString('en-US')}`;
     renderCounts();
     renderList();
   } catch (error) {
+    if (epoch !== state.hostEpoch) return;
     document.getElementById('system-state').textContent = 'Connection error';
     document.querySelector('.system-indicator').classList.add('offline');
     document.getElementById('refresh-status').textContent = error.message;
     if (!silent) showToast(error.message, 'error');
   } finally {
-    state.refreshing = false;
-    document.getElementById('service-list').setAttribute('aria-busy', 'false');
-    document.getElementById('refresh-button').classList.remove('spinning');
+    if (epoch === state.hostEpoch) {
+      state.refreshing = false;
+      document.getElementById('service-list').setAttribute('aria-busy', 'false');
+      document.getElementById('refresh-button').classList.remove('spinning');
+    }
   }
 }
 
 async function persistSettings() {
   try {
-    await api.saveSettings({ favorites: [...state.favorites], theme: state.theme, sidebarCollapsed: state.sidebarCollapsed, detailsCollapsed: state.detailsCollapsed });
+    await api.saveSettings({ favorites: [...state.favorites], hosts: state.hosts, selectedHost: state.host, theme: state.theme, sidebarCollapsed: state.sidebarCollapsed, detailsCollapsed: state.detailsCollapsed });
   } catch (error) {
     showToast(`Could not save preferences: ${error.message}`, 'error');
   }
@@ -475,10 +533,11 @@ function showConfirmation(title, message, action, unit) {
 }
 
 async function performAction(action, unit) {
+  if (remoteSelected()) return;
   const actionNames = { start: 'start', stop: 'stop', restart: 'restart', enable: 'enable at boot', disable: 'disable at boot' };
   try {
     document.getElementById('refresh-status').textContent = `${unit}: performing ${actionNames[action]}… Polkit may request authorization.`;
-    await api.serviceAction(action, unit);
+    await api.serviceAction(action, unit, state.host);
     showToast(`${unit}: ${actionNames[action]} completed.`, 'success');
     await refreshServices(true);
   } catch (error) {
@@ -488,9 +547,10 @@ async function performAction(action, unit) {
 }
 
 async function performDelete(unit) {
+  if (remoteSelected()) return;
   try {
     document.getElementById('refresh-status').textContent = `${unit}: deleting… Polkit may request authorization.`;
-    await api.deleteService(unit);
+    await api.deleteService(unit, state.host);
     if (state.logLive) await stopLiveLogs();
     state.favorites.delete(unit);
     await persistSettings();
@@ -506,8 +566,9 @@ async function performDelete(unit) {
 }
 
 function toggleFavorite(unit) {
-  if (state.favorites.has(unit)) state.favorites.delete(unit);
-  else state.favorites.add(unit);
+  const key = favoriteKey(unit);
+  if (state.favorites.has(key)) state.favorites.delete(key);
+  else state.favorites.add(key);
   persistSettings();
   renderCounts();
   renderList();
@@ -567,12 +628,12 @@ async function startLiveLogs() {
   document.getElementById('pause-button').textContent = 'Ⅱ  Pause';
   renderLogs();
   try {
-    await api.startLogs(state.selected, 500);
+    await api.startLogs(state.selected, 500, state.host);
     state.logLive = true;
     document.getElementById('live-button').classList.add('is-live');
     document.getElementById('live-button').innerHTML = '<i></i><span>Live</span>';
     document.getElementById('pause-button').disabled = false;
-    document.getElementById('logs-status').textContent = `Live logs for ${state.selected} · Polkit may request authorization`;
+    document.getElementById('logs-status').textContent = `Live logs for ${state.selected} · ${remoteSelected() ? 'SSH' : 'Polkit may request authorization'}`;
   } catch (error) {
     document.getElementById('logs-status').textContent = error.message;
     showToast(error.message, 'error');
@@ -587,8 +648,9 @@ async function loadHistory(range) {
   ui.logs.innerHTML = '<div class="log-empty">Loading log history…</div>';
   document.getElementById('logs-status').textContent = `Loading history for ${state.selected}…`;
   try {
-    const output = await api.readHistory(selectedUnit, range, 500);
-    if (state.selected !== selectedUnit) return;
+    const target = state.host;
+    const output = await api.readHistory(selectedUnit, range, 500, target);
+    if (state.selected !== selectedUnit || state.host !== target) return;
     state.logLines = output.split(/\r?\n/).filter(Boolean);
     renderLogs();
     document.getElementById('logs-status').textContent = `Log history for ${state.selected}`;
@@ -614,11 +676,15 @@ function updateSelected(unit) {
 async function initialize() {
   const settings = await api.loadSettings();
   state.favorites = new Set(settings.favorites || []);
+  state.hosts = settings.hosts || [];
+  state.host = state.hosts.includes(settings.selectedHost) ? settings.selectedHost : 'local';
   state.theme = settings.theme === 'light' ? 'light' : 'dark';
   state.sidebarCollapsed = settings.sidebarCollapsed === true;
   state.detailsCollapsed = settings.detailsCollapsed === true;
   document.body.dataset.theme = state.theme;
   renderPanelVisibility();
+  renderHosts();
+  document.getElementById('view-description').textContent = remoteSelected() ? `Viewing ${state.host} · unit editing available` : views[state.view][1];
   await refreshServices();
   setInterval(() => refreshServices(true), 5000);
 }
@@ -626,6 +692,45 @@ async function initialize() {
 document.querySelector('.view-nav').addEventListener('click', (event) => {
   const button = event.target.closest('[data-view]');
   if (button) setView(button.dataset.view);
+});
+
+ui.hostSelect.addEventListener('change', (event) => selectHost(event.target.value));
+document.getElementById('add-host').addEventListener('click', () => {
+  document.getElementById('host-address').value = '';
+  document.getElementById('host-error').hidden = true;
+  ui.hostDialog.showModal();
+  document.getElementById('host-address').focus();
+});
+document.getElementById('host-cancel').addEventListener('click', () => ui.hostDialog.close());
+document.getElementById('host-cancel-top').addEventListener('click', () => ui.hostDialog.close());
+document.getElementById('host-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const host = document.getElementById('host-address').value.trim();
+  const errorNode = document.getElementById('host-error');
+  const saveButton = document.getElementById('host-save');
+  errorNode.hidden = true;
+  saveButton.disabled = true;
+  saveButton.textContent = 'Connecting…';
+  try {
+    await api.checkHost(host);
+    if (!state.hosts.includes(host)) state.hosts.push(host);
+    ui.hostDialog.close();
+    await selectHost(host);
+  } catch (error) {
+    errorNode.textContent = `${error.message} Set up SSH keys and accept the host key in a terminal first.`;
+    errorNode.hidden = false;
+  } finally {
+    saveButton.disabled = false;
+    saveButton.textContent = 'Connect';
+  }
+});
+document.getElementById('remove-host').addEventListener('click', async () => {
+  if (!remoteSelected()) return;
+  const host = state.host;
+  state.hosts = state.hosts.filter((item) => item !== host);
+  for (const key of [...state.favorites]) if (key.startsWith(`${host}/`)) state.favorites.delete(key);
+  await selectHost('local');
+  showToast(`${host} removed from Tudun.`, 'info');
 });
 
 document.getElementById('toggle-sidebar').addEventListener('click', () => {
@@ -698,6 +803,7 @@ document.getElementById('refresh-button').addEventListener('click', () => refres
 document.getElementById('add-service').addEventListener('click', openCreateUnit);
 document.getElementById('edit-service').addEventListener('click', openEditUnit);
 document.getElementById('delete-service').addEventListener('click', () => {
+  if (remoteSelected()) return;
   const service = state.services.find((item) => item.name === state.selected);
   if (!service || service.file !== `/etc/systemd/system/${service.name}`) return;
   showConfirmation('Delete service', `Delete ${service.name}? Tudun will stop it, disable startup, remove its local unit file, and reload systemd. This cannot be undone.`, 'delete', service.name);
@@ -718,6 +824,7 @@ document.getElementById('unit-content').addEventListener('input', (event) => {
 });
 document.getElementById('unit-cancel').addEventListener('click', () => ui.unitDialog.close());
 document.getElementById('unit-cancel-top').addEventListener('click', () => ui.unitDialog.close());
+ui.unitDialog.addEventListener('close', () => { document.getElementById('unit-password').value = ''; });
 document.getElementById('analysis-close').addEventListener('click', () => ui.analysisDialog.close());
 ui.analysisDialog.addEventListener('close', () => {
   if (state.analysis) clearInterval(state.analysis.timer);
@@ -730,6 +837,7 @@ document.getElementById('theme-button').addEventListener('click', () => {
 });
 document.getElementById('favorite-toggle').addEventListener('click', () => toggleFavorite(state.selected));
 document.getElementById('startup-toggle').addEventListener('click', () => {
+  if (remoteSelected()) return;
   const service = state.services.find((item) => item.name === state.selected);
   if (!service || ['static', 'masked', 'masked-runtime', 'generated', 'transient'].includes(service.startup)) return;
   const action = ['enabled', 'enabled-runtime'].includes(service.startup) ? 'disable' : 'enable';
@@ -738,6 +846,7 @@ document.getElementById('startup-toggle').addEventListener('click', () => {
 });
 
 document.querySelector('.detail-actions').addEventListener('click', (event) => {
+  if (remoteSelected()) return;
   const button = event.target.closest('[data-action]');
   if (!button || !state.selected) return;
   const action = button.dataset.action;
@@ -805,6 +914,7 @@ api.onLogLine((line) => {
   if (!state.logPaused) renderLogs();
 });
 api.onLogsEnded(() => {
+  if (!state.logLive) return;
   state.logLive = false;
   document.getElementById('live-button').classList.remove('is-live');
   document.getElementById('pause-button').disabled = true;

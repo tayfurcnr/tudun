@@ -66,7 +66,7 @@ Version: {VERSION}
 Section: admin
 Priority: optional
 Architecture: {args.arch}
-Depends: libc6 (>= 2.28), libstdc++6, libgtk-3-0, libnss3, libxss1, libxtst6, libatspi2.0-0, libasound2, libgbm1, systemd, policykit-1, python3
+Depends: libc6 (>= 2.28), libstdc++6, libgtk-3-0, libnss3, libxss1, libxtst6, libatspi2.0-0, libasound2, libgbm1, systemd, policykit-1, python3, openssh-client
 Maintainer: TUDUN Contributors
 Description: TUDUN systemd service manager
  Electron desktop application for monitoring and managing system services.

@@ -360,4 +360,4 @@ function startLogs(unit, sender, limit = 500) {
   });
 }
 
-module.exports = { listServices, serviceMetrics, serviceAction, getUnitDraft, saveUnitDraft, deleteService, readHistory, startLogs, stopLogs };
+module.exports = { listServices, serviceMetrics, serviceAction, getUnitDraft, saveUnitDraft, deleteService, readHistory, startLogs, stopLogs, WRITE_UNIT_SCRIPT };
