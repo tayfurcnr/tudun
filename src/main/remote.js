@@ -5,11 +5,12 @@ const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 const { Client } = require('ssh2');
-const { WRITE_UNIT_SCRIPT } = require('./systemd');
+const { WRITE_UNIT_SCRIPT, DELETE_UNIT_SCRIPT } = require('./systemd');
 
 const execFileAsync = promisify(execFile);
 const HOST_PATTERN = /^[a-z_][a-z0-9_-]*@[a-z0-9][a-z0-9.-]*$/i;
 const UNIT_PATTERN = /^[A-Za-z0-9_.:@-]+\.service$/;
+const ALLOWED_ACTIONS = new Set(['start', 'stop', 'restart', 'enable', 'disable']);
 const PROPERTIES = 'Id,Description,LoadState,ActiveState,SubState,UnitFileState,MainPID,ActiveEnterTimestamp,MemoryCurrent,FragmentPath,Result,ExecMainStatus';
 const SSH_KEY = path.join(os.homedir(), '.ssh', 'tudun_ed25519');
 const KNOWN_HOSTS = path.join(os.homedir(), '.ssh', 'known_hosts');
@@ -266,6 +267,52 @@ async function saveUnitDraft(host, draft, password) {
   });
 }
 
+function validatePassword(password) {
+  if (typeof password !== 'string' || password.length > 1024 || password.includes('\n') || password.includes('\r')) {
+    throw new Error('Invalid remote administrator password.');
+  }
+}
+
+function privilegedCommand(host, command, password, timeout = 120000) {
+  validateHost(host);
+  validatePassword(password);
+  const sudo = password ? `sudo -S -p '' ${command}` : `sudo -n ${command}`;
+  return new Promise((resolve, reject) => {
+    const child = spawn('ssh', [...SSH_OPTIONS, host, sudo], { stdio: ['pipe', 'pipe', 'pipe'] });
+    let stdout = '', stderr = '', settled = false;
+    const finish = (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (error) reject(error); else resolve(stdout);
+    };
+    const timer = setTimeout(() => { child.kill('SIGTERM'); finish(new Error('Remote operation timed out.')); }, timeout);
+    child.stdout.on('data', (chunk) => { stdout += chunk.toString().slice(0, Math.max(0, 8192 - stdout.length)); });
+    child.stderr.on('data', (chunk) => { stderr += chunk.toString().slice(0, Math.max(0, 8192 - stderr.length)); });
+    child.on('error', (error) => finish(error));
+    child.on('close', (code) => finish(code === 0 ? null : new Error(stderr.trim() || stdout.trim() || 'Remote operation failed.')));
+    child.stdin.on('error', () => {});
+    child.stdin.end(password ? `${password}\n` : '');
+  });
+}
+
+async function serviceAction(host, action, unit, password) {
+  assertUnit(host, unit);
+  if (!ALLOWED_ACTIONS.has(action)) throw new Error('Service action is not allowed.');
+  return privilegedCommand(host, `systemctl ${action} -- ${unit}`, password);
+}
+
+async function deleteService(host, unit, password) {
+  assertUnit(host, unit);
+  const draft = await getUnitDraft(host, unit);
+  if (draft.mode !== 'local') throw new Error('Only local service files can be deleted.');
+  const script = Buffer.from(DELETE_UNIT_SCRIPT).toString('base64');
+  const command = `/usr/bin/python3 -c 'import base64;exec(base64.b64decode("${script}"))' ${unit} ${draft.original}`;
+  await privilegedCommand(host, command, password);
+  knownUnits.get(host)?.delete(unit);
+  return true;
+}
+
 function stopLogs() {
   if (logProcess && !logProcess.killed) logProcess.kill('SIGTERM');
   logProcess = null;
@@ -301,4 +348,4 @@ function startLogs(host, unit, sender, limit = 500) {
   });
 }
 
-module.exports = { validateHost, checkHost, inspectHost, setupHost, listServices, getUnitDraft, saveUnitDraft, readHistory, startLogs, stopLogs };
+module.exports = { validateHost, checkHost, inspectHost, setupHost, listServices, serviceAction, getUnitDraft, saveUnitDraft, deleteService, readHistory, startLogs, stopLogs };

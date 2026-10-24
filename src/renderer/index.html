@@ -104,6 +104,7 @@
 
   <dialog id="confirm-dialog" class="confirm-dialog">
     <div class="dialog-icon">⚠</div><h2 id="confirm-title">Confirm action</h2><p id="confirm-message"></p>
+    <label class="unit-field" id="confirm-password-field" hidden>Remote administrator password<input id="confirm-password" type="password" autocomplete="off" placeholder="Password for sudo on the remote computer"><small>Used for this operation only. Leave blank if remote sudo needs no password.</small></label>
     <div class="dialog-actions"><button class="button button-quiet" id="confirm-cancel">Cancel</button><button class="button button-primary" id="confirm-accept">Confirm</button></div>
   </dialog>
   <dialog id="host-dialog" class="host-dialog" aria-labelledby="host-dialog-title">

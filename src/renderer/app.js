@@ -337,9 +337,9 @@ function renderDetails() {
   status.className = `status-badge ${statusClass(service)}`;
   const startupButton = document.getElementById('startup-toggle');
   const isEnabled = ['enabled', 'enabled-runtime'].includes(service.startup);
-  const cannotToggle = remoteSelected() || ['static', 'masked', 'masked-runtime', 'generated', 'transient'].includes(service.startup);
+  const cannotToggle = ['static', 'masked', 'masked-runtime', 'generated', 'transient'].includes(service.startup);
   startupButton.disabled = cannotToggle;
-  startupButton.title = remoteSelected() ? 'Remote computers are read-only' : (service.startup === 'static' ? 'Static units cannot be enabled directly.' : (service.startup.startsWith('masked') ? 'Unmask this unit before changing its startup setting.' : ''));
+  startupButton.title = service.startup === 'static' ? 'Static units cannot be enabled directly.' : (service.startup.startsWith('masked') ? 'Unmask this unit before changing its startup setting.' : '');
   const switchNode = document.getElementById('startup-switch');
   switchNode.classList.toggle('enabled', isEnabled);
   switchNode.classList.toggle('not-toggleable', cannotToggle);
@@ -352,17 +352,17 @@ function renderDetails() {
   document.getElementById('detail-file').title = service.file || '';
   const deleteButton = document.getElementById('delete-service');
   const localUnit = service.file === `/etc/systemd/system/${service.name}`;
-  deleteButton.disabled = remoteSelected() || !localUnit;
-  deleteButton.title = remoteSelected() ? 'Remote computers are read-only' : (localUnit ? 'Delete this local service' : 'Package-provided services cannot be deleted here');
+  deleteButton.disabled = !localUnit;
+  deleteButton.title = localUnit ? `Delete this service on ${remoteSelected() ? state.host : 'this computer'}` : 'Package-provided services cannot be deleted here';
   document.getElementById('edit-service').disabled = false;
   document.getElementById('edit-service').title = remoteSelected() ? `Edit the unit on ${state.host}` : '';
-  document.querySelector('.detail-actions [data-action="restart"]').disabled = remoteSelected();
+  document.querySelector('.detail-actions [data-action="restart"]').disabled = false;
   document.getElementById('detail-since').textContent = formatTime(service.since);
   const result = service.result && service.result !== 'success' ? `${service.result} (exit ${service.exitCode || '—'})` : (service.active === 'failed' ? 'Failed' : 'Normal');
   document.getElementById('detail-result').textContent = result;
   document.getElementById('logs-unit').textContent = service.name;
-  document.querySelectorAll('.action-tile[data-action="start"]').forEach((button) => { button.disabled = remoteSelected() || service.active === 'active'; });
-  document.querySelectorAll('.action-tile[data-action="stop"]').forEach((button) => { button.disabled = remoteSelected() || service.active === 'inactive'; });
+  document.querySelectorAll('.action-tile[data-action="start"]').forEach((button) => { button.disabled = service.active === 'active'; });
+  document.querySelectorAll('.action-tile[data-action="stop"]').forEach((button) => { button.disabled = service.active === 'inactive'; });
 }
 
 const emptyRevision = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';
@@ -523,21 +523,23 @@ function renderPanelVisibility() {
 }
 
 function showConfirmation(title, message, action, unit) {
-  state.actionPending = { action, unit };
+  state.actionPending = { action, unit, target: state.host };
   document.getElementById('confirm-title').textContent = title;
   document.getElementById('confirm-message').textContent = message;
+  document.getElementById('confirm-password').value = '';
+  document.getElementById('confirm-password-field').hidden = !remoteSelected();
   const accept = document.getElementById('confirm-accept');
   accept.textContent = action === 'delete' ? 'Delete service' : 'Confirm';
   accept.classList.toggle('button-danger', action === 'delete');
   ui.dialog.showModal();
+  if (remoteSelected()) document.getElementById('confirm-password').focus();
 }
 
-async function performAction(action, unit) {
-  if (remoteSelected()) return;
+async function performAction(action, unit, target, password) {
   const actionNames = { start: 'start', stop: 'stop', restart: 'restart', enable: 'enable at boot', disable: 'disable at boot' };
   try {
-    document.getElementById('refresh-status').textContent = `${unit}: performing ${actionNames[action]}… Polkit may request authorization.`;
-    await api.serviceAction(action, unit, state.host);
+    document.getElementById('refresh-status').textContent = `${unit}: performing ${actionNames[action]} on ${target === 'local' ? 'this computer' : target}…`;
+    await api.serviceAction(action, unit, target, password);
     showToast(`${unit}: ${actionNames[action]} completed.`, 'success');
     await refreshServices(true);
   } catch (error) {
@@ -546,13 +548,12 @@ async function performAction(action, unit) {
   }
 }
 
-async function performDelete(unit) {
-  if (remoteSelected()) return;
+async function performDelete(unit, target, password) {
   try {
-    document.getElementById('refresh-status').textContent = `${unit}: deleting… Polkit may request authorization.`;
-    await api.deleteService(unit, state.host);
+    document.getElementById('refresh-status').textContent = `${unit}: deleting on ${target === 'local' ? 'this computer' : target}…`;
+    await api.deleteService(unit, target, password);
     if (state.logLive) await stopLiveLogs();
-    state.favorites.delete(unit);
+    state.favorites.delete(target === 'local' ? unit : `${target}/${unit}`);
     await persistSettings();
     state.selected = null;
     state.logLines = [];
@@ -830,10 +831,9 @@ document.getElementById('refresh-button').addEventListener('click', () => refres
 document.getElementById('add-service').addEventListener('click', openCreateUnit);
 document.getElementById('edit-service').addEventListener('click', openEditUnit);
 document.getElementById('delete-service').addEventListener('click', () => {
-  if (remoteSelected()) return;
   const service = state.services.find((item) => item.name === state.selected);
   if (!service || service.file !== `/etc/systemd/system/${service.name}`) return;
-  showConfirmation('Delete service', `Delete ${service.name}? Tudun will stop it, disable startup, remove its local unit file, and reload systemd. This cannot be undone.`, 'delete', service.name);
+  showConfirmation('Delete service', `Delete ${service.name} on ${remoteSelected() ? state.host : 'this computer'}? Tudun will stop it, disable startup, remove its unit file, and reload systemd. This cannot be undone.`, 'delete', service.name);
 });
 document.getElementById('unit-form').addEventListener('submit', saveUnit);
 document.getElementById('unit-description').addEventListener('input', (event) => {
@@ -864,21 +864,19 @@ document.getElementById('theme-button').addEventListener('click', () => {
 });
 document.getElementById('favorite-toggle').addEventListener('click', () => toggleFavorite(state.selected));
 document.getElementById('startup-toggle').addEventListener('click', () => {
-  if (remoteSelected()) return;
   const service = state.services.find((item) => item.name === state.selected);
   if (!service || ['static', 'masked', 'masked-runtime', 'generated', 'transient'].includes(service.startup)) return;
   const action = ['enabled', 'enabled-runtime'].includes(service.startup) ? 'disable' : 'enable';
   const verb = action === 'enable' ? 'enable startup' : 'disable startup';
-  showConfirmation('Startup setting', `Do you want to ${verb} for ${service.name}? This does not start or stop the service now.`, action, service.name);
+  showConfirmation('Startup setting', `Do you want to ${verb} for ${service.name} on ${remoteSelected() ? state.host : 'this computer'}? This does not start or stop the service now.`, action, service.name);
 });
 
 document.querySelector('.detail-actions').addEventListener('click', (event) => {
-  if (remoteSelected()) return;
   const button = event.target.closest('[data-action]');
   if (!button || !state.selected) return;
   const action = button.dataset.action;
   const verb = { start: 'start', stop: 'stop', restart: 'restart' }[action];
-  showConfirmation('Service action', `Do you want to ${verb} ${state.selected}?`, action, state.selected);
+  showConfirmation('Service action', `Do you want to ${verb} ${state.selected} on ${remoteSelected() ? state.host : 'this computer'}?`, action, state.selected);
 });
 
 document.getElementById('open-live-logs').addEventListener('click', startLiveLogs);
@@ -919,12 +917,14 @@ document.getElementById('export-logs-button').addEventListener('click', async ()
 document.getElementById('confirm-cancel').addEventListener('click', () => ui.dialog.close());
 document.getElementById('confirm-accept').addEventListener('click', async () => {
   const pending = state.actionPending;
+  const password = document.getElementById('confirm-password').value;
   ui.dialog.close();
   state.actionPending = null;
-  if (pending?.action === 'delete') await performDelete(pending.unit);
-  else if (pending) await performAction(pending.action, pending.unit);
+  if (pending?.action === 'delete') await performDelete(pending.unit, pending.target, password);
+  else if (pending) await performAction(pending.action, pending.unit, pending.target, password);
 });
 ui.dialog.addEventListener('click', (event) => { if (event.target === ui.dialog) ui.dialog.close(); });
+ui.dialog.addEventListener('close', () => { document.getElementById('confirm-password').value = ''; });
 
 document.addEventListener('keydown', (event) => {
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {

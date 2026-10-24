@@ -63,10 +63,10 @@ function registerIpc() {
     });
     return settingsWrite;
   });
-  ipcMain.handle('service:action', (_event, action, unit, target = 'local') => { localOnly(target); return systemd.serviceAction(action, unit); });
+  ipcMain.handle('service:action', (_event, action, unit, target = 'local', password = '') => target === 'local' ? systemd.serviceAction(action, unit) : remote.serviceAction(target, action, unit, password));
   ipcMain.handle('unit:draft', (_event, unit, target = 'local') => target === 'local' ? systemd.getUnitDraft(unit) : remote.getUnitDraft(target, unit));
   ipcMain.handle('unit:save', (_event, draft, target = 'local', password = '') => target === 'local' ? systemd.saveUnitDraft(draft) : remote.saveUnitDraft(target, draft, password));
-  ipcMain.handle('unit:delete', (_event, unit, target = 'local') => { localOnly(target); return systemd.deleteService(unit); });
+  ipcMain.handle('unit:delete', (_event, unit, target = 'local', password = '') => target === 'local' ? systemd.deleteService(unit) : remote.deleteService(target, unit, password));
   ipcMain.handle('logs:history', (_event, unit, range, limit, target = 'local') => target === 'local' ? systemd.readHistory(unit, range, limit) : remote.readHistory(target, unit, range, limit));
   ipcMain.handle('logs:start', (event, unit, limit, target = 'local') => {
     if (target === 'local') systemd.startLogs(unit, event.sender, limit);
